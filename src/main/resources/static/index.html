@@ -1,0 +1,2063 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BitBrush</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Major+Mono+Display&amp;family=Share+Tech+Mono&amp;display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #000000;
+      color: #cccccc;
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 20px;
+      line-height: 1.2;
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      padding: 16px;
+    }
+
+    #app {
+      display: grid;
+      grid-template-columns: 1fr 250px;
+      grid-template-rows: auto;
+      gap: 16px;
+      max-width: 900px;
+      margin: 0 auto;
+      width: 100%;
+    }
+
+    #canvas-container {
+      grid-column: 1;
+      grid-row: 1;
+      aspect-ratio: 1 / 1;
+      max-height: calc(100vh - 80px);
+      overflow: hidden;
+      position: relative;
+      background: #000000;
+    }
+
+    #canvas {
+      display: block;
+      cursor: crosshair;
+      image-rendering: pixelated;
+      position: absolute;
+      top: 0;
+      left: 0;
+      transform-origin: 0 0;
+    }
+
+    #overlay {
+      display: block;
+      position: absolute;
+      top: 0;
+      left: 0;
+      pointer-events: none;
+    }
+
+    #sidebar {
+      grid-column: 2;
+      grid-row: 1;
+      width: 250px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      background: #1a1a1a;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+      padding: 16px;
+      overflow-y: auto;
+      max-height: calc(100vh - 80px);
+      flex-shrink: 0;
+    }
+
+    #footer {
+      grid-column: 1;
+      grid-row: 2;
+      display: none;
+    }
+
+    #stats {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-size: 16px;
+    }
+
+    #color-preview {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    #color-preview-swatch {
+      width: 32px;
+      height: 32px;
+      border-radius: 3px;
+      border: 2px solid #ffffff;
+      flex-shrink: 0;
+    }
+
+    #color-preview-hex {
+      font-size: 14px;
+      color: #888888;
+    }
+
+    #recent-colors {
+      display: flex;
+      gap: 4px;
+    }
+
+    .recent-swatch {
+      width: 24px;
+      height: 24px;
+      cursor: pointer;
+      border: 2px solid transparent;
+      border-radius: 3px;
+      transition: border-color 0.15s, transform 0.1s;
+    }
+
+    .recent-swatch:hover {
+      border-color: rgba(255, 255, 255, 0.4);
+      transform: scale(1.15);
+      z-index: 1;
+    }
+
+    .recent-swatch.empty {
+      border: 1px dashed rgba(255, 255, 255, 0.08);
+      cursor: default;
+    }
+
+    .recent-swatch.empty:hover {
+      border-color: rgba(255, 255, 255, 0.08);
+      transform: none;
+    }
+
+    #title {
+      font-family: 'Major Mono Display', monospace;
+      font-size: 20px;
+      color: #ffffff;
+      line-height: 1.2;
+    }
+
+    #status {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 16px;
+      color: #888888;
+      white-space: nowrap;
+    }
+
+    #status-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #666666;
+      flex-shrink: 0;
+    }
+
+    #bank {
+      font-size: 20px;
+      color: #cccccc;
+      white-space: nowrap;
+    }
+
+    #bank-balance {
+      color: #00cccc;
+      transition: color 0.3s ease;
+    }
+
+    #bank-progress-bar {
+      width: 100%;
+      height: 4px;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 2px;
+      overflow: hidden;
+      margin-top: 4px;
+    }
+
+    #bank-progress-fill {
+      height: 100%;
+      width: 0%;
+      background: #00cccc;
+      border-radius: 2px;
+    }
+
+    .progress-indeterminate {
+      width: 100% !important;
+      background-color: transparent !important;
+      background-image: repeating-linear-gradient(
+        -45deg,
+        #00cccc 0, #00cccc 8px,
+        transparent 8px, transparent 16px
+      ) !important;
+      background-size: 22.6px 100% !important;
+      animation: barberpole 0.6s linear infinite !important;
+    }
+
+    @keyframes barberpole {
+      to { background-position: 22.6px 0; }
+    }
+
+    #coords {
+      font-size: 16px;
+      color: #666666;
+      white-space: nowrap;
+    }
+
+    .divider {
+      height: 1px;
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    .section-label {
+      font-size: 14px;
+      color: #666666;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+    }
+
+    #palette {
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 2px;
+    }
+
+    .swatch {
+      aspect-ratio: 1;
+      min-width: 0;
+      overflow: hidden;
+      cursor: pointer;
+      border: 2px solid transparent;
+      border-radius: 2px;
+      flex-shrink: 0;
+      transition: border-color 0.15s, transform 0.1s;
+    }
+
+    .swatch:hover {
+      border-color: rgba(255, 255, 255, 0.4);
+      transform: scale(1.15);
+      z-index: 1;
+    }
+
+    .swatch.active {
+      border-color: #ffffff;
+      box-shadow: 0 0 8px rgba(0, 204, 204, 0.3);
+    }
+
+    .swatch.palette-focused {
+      outline: 2px solid #00cccc;
+      outline-offset: 1px;
+      z-index: 2;
+    }
+
+    .swatch.eraser-swatch {
+      background-color: #1a1a1a !important;
+      position: relative;
+    }
+    .swatch.eraser-swatch::before,
+    .swatch.eraser-swatch::after {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 70%;
+      height: 2px;
+      background-color: #ff4444;
+    }
+    .swatch.eraser-swatch::before {
+      transform: translate(-50%, -50%) rotate(45deg);
+    }
+    .swatch.eraser-swatch::after {
+      transform: translate(-50%, -50%) rotate(-45deg);
+    }
+
+    /* Username modal */
+    #modal-overlay {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: rgba(0, 0, 0, 0.85);
+      z-index: 1000;
+      justify-content: center;
+      align-items: center;
+    }
+
+    #modal {
+      background: #1a1a1a;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      min-width: 280px;
+      max-width: 360px;
+    }
+
+    #modal h2 {
+      font-family: 'Share Tech Mono', monospace;
+      color: #ffffff;
+      font-size: 20px;
+      font-weight: 400;
+    }
+
+    #modal p {
+      font-family: 'Share Tech Mono', monospace;
+      color: #888888;
+      font-size: 16px;
+    }
+
+    #username-input {
+      background: #111111;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 4px;
+      color: #ffffff;
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 20px;
+      padding: 8px 12px;
+      outline: none;
+      width: 100%;
+    }
+
+    #username-input:focus {
+      border-color: #00cccc;
+    }
+
+    #modal-error {
+      color: #ff6666;
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 16px;
+      min-height: 20px;
+    }
+
+    #username-submit {
+      background: #00cccc;
+      border: none;
+      border-radius: 4px;
+      color: #000000;
+      cursor: pointer;
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 20px;
+      padding: 8px 16px;
+      align-self: flex-end;
+    }
+
+    #username-submit:hover {
+      background: #00eeee;
+    }
+
+    /* Tooltip */
+    #tooltip {
+      display: none;
+      position: fixed;
+      z-index: 100;
+      pointer-events: none;
+      background: #1a1a1a;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 4px;
+      padding: 8px;
+      font-family: 'Share Tech Mono', monospace;
+      max-width: 250px;
+    }
+
+    #tooltip-username {
+      font-size: 16px;
+      color: #ffffff;
+    }
+
+    #tooltip-time {
+      font-size: 14px;
+      color: #888888;
+    }
+
+    /* Export button */
+    #export-btn {
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 6px;
+      color: #cccccc;
+      cursor: pointer;
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 18px;
+      padding: 8px 12px;
+      text-align: center;
+      transition: background 0.2s, border-color 0.2s;
+    }
+
+    #export-btn:hover {
+      background: rgba(255, 255, 255, 0.1);
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    /* Focus outline (global a11y) */
+    *:focus-visible {
+      outline: 2px solid #00cccc;
+      outline-offset: 2px;
+    }
+
+    /* Hint overlay */
+    #hint-overlay {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(0, 0, 0, 0.75);
+      border-radius: 8px;
+      padding: 16px 24px;
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 16px;
+      color: #00cccc;
+      text-align: center;
+      pointer-events: none;
+      z-index: 10;
+      transition: opacity 500ms ease-out;
+    }
+
+    /* Mobile drawer -- hidden on desktop */
+    #drawer {
+      display: none;
+    }
+
+    @media (max-width: 767px) {
+      #app {
+        display: flex;
+        flex-direction: column;
+        max-width: 100%;
+      }
+
+      #canvas-container {
+        width: 100%;
+        max-height: calc(100vh - 64px);
+      }
+
+      #sidebar {
+        display: none;
+      }
+
+      #footer {
+        display: none;
+      }
+
+      #drawer {
+        display: block;
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        background: #1a1a1a;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+        transform: translateY(calc(100% - 48px));
+        transition: transform 300ms ease-out;
+        max-height: 60vh;
+        z-index: 50;
+      }
+
+      #drawer.expanded {
+        transform: translateY(0);
+        overflow-y: auto;
+      }
+
+      #drawer-strip {
+        height: 48px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 16px;
+        cursor: pointer;
+        user-select: none;
+      }
+
+      #drawer-balance {
+        font-family: 'Share Tech Mono', monospace;
+        font-size: 20px;
+        color: #00cccc;
+      }
+
+      #drawer-swatch {
+        width: 24px;
+        height: 24px;
+        border-radius: 3px;
+        border: 2px solid #ffffff;
+        flex-shrink: 0;
+      }
+
+      #drawer-recent-colors {
+        display: flex;
+        gap: 3px;
+        align-items: center;
+      }
+
+      .drawer-recent-dot {
+        width: 16px;
+        height: 16px;
+        border-radius: 2px;
+        flex-shrink: 0;
+        cursor: pointer;
+      }
+
+      #drawer-progress-bar {
+        height: 3px;
+        background: rgba(255, 255, 255, 0.08);
+        overflow: hidden;
+      }
+
+      #drawer-progress-fill {
+        height: 100%;
+        width: 0%;
+        background: #00cccc;
+      }
+
+      #drawer-content {
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+    }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1.6.1/dist/sockjs.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@stomp/stompjs@7.3.0/bundles/stomp.umd.min.js"></script>
+</head>
+<body>
+
+  <!-- Username modal (shown when no username in LocalStorage) -->
+  <div id="modal-overlay">
+    <div id="modal" role="dialog" aria-modal="true" aria-labelledby="modal-heading">
+      <h2 id="modal-heading">Welcome to BitBrush</h2>
+      <p>Choose a username to start painting</p>
+      <input id="username-input" type="text" placeholder="username (3-30 chars)" maxlength="30">
+      <div id="modal-error"></div>
+      <button id="username-submit">Join</button>
+    </div>
+  </div>
+
+  <!-- Tooltip (outside #app, positioned fixed relative to viewport) -->
+  <div id="tooltip">
+    <div id="tooltip-username"></div>
+    <div id="tooltip-time"></div>
+  </div>
+
+  <!-- Screen reader announcements (visually hidden) -->
+  <div id="sr-announce" aria-live="polite" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;"></div>
+
+  <!-- Main layout -->
+  <div id="app">
+    <div id="canvas-container" tabindex="0" role="application" aria-label="Pixel canvas, use arrow keys to navigate, Space to place pixel">
+      <canvas id="canvas"></canvas>
+      <canvas id="overlay"></canvas>
+    </div>
+    <div id="sidebar">
+      <div id="title">bitBrush</div>
+      <div id="status" aria-live="polite">
+        <span id="status-dot"></span>
+        <span id="status-text">connecting...</span>
+      </div>
+      <div id="bank">
+        <span id="bank-balance">&#x2013;/&#x2013;</span> pixels
+        <div id="bank-progress-bar"><div id="bank-progress-fill"></div></div>
+      </div>
+      <div id="coords">x: 0, y: 0</div>
+      <div class="divider"></div>
+      <div id="color-preview">
+        <div id="color-preview-swatch"></div>
+        <span id="color-preview-hex">#000000</span>
+      </div>
+      <div id="recent-colors"></div>
+      <div class="section-label">Palette</div>
+      <div id="palette" tabindex="0" role="listbox" aria-label="Color palette"></div>
+      <div class="divider"></div>
+      <div id="stats"></div>
+      <button id="export-btn" aria-label="Export canvas as PNG">Export PNG</button>
+    </div>
+    <div id="footer">
+    </div>
+  </div>
+
+  <!-- Mobile bottom drawer -->
+  <div id="drawer" aria-label="Controls drawer">
+    <div id="drawer-strip" role="button" tabindex="0" aria-expanded="false" aria-controls="drawer-content" aria-label="Toggle palette drawer">
+      <span id="drawer-balance"></span>
+      <span id="drawer-recent-colors"></span>
+      <span id="drawer-swatch"></span>
+    </div>
+    <div id="drawer-progress-bar"><div id="drawer-progress-fill"></div></div>
+    <div id="drawer-content">
+      <!-- Populated by JS: clone of sidebar content for mobile -->
+    </div>
+  </div>
+
+  <script>
+    // ── Constants ──────────────────────────────────────────────────────────────
+    const SCALE  = 2;
+    const WIDTH  = 250;
+    const HEIGHT = 250;
+
+    // ── Canvas setup ──────────────────────────────────────────────────────────
+    const canvas = document.getElementById('canvas');
+    canvas.width  = WIDTH  * SCALE;
+    canvas.height = HEIGHT * SCALE;
+    canvas.style.width  = (WIDTH  * SCALE) + 'px';
+    canvas.style.height = (HEIGHT * SCALE) + 'px';
+    canvas.style.imageRendering = 'pixelated';
+    const ctx = canvas.getContext('2d');
+    const imageData = ctx.createImageData(WIDTH * SCALE, HEIGHT * SCALE);
+    // Initialize alpha channel to 255 (fully opaque black)
+    for (let i = 3; i < imageData.data.length; i += 4) {
+      imageData.data[i] = 255;
+    }
+    ctx.putImageData(imageData, 0, 0);
+
+    // ── Overlay canvas setup (screen-space, not CSS-transformed) ─────────────
+    const overlay = document.getElementById('overlay');
+    const overlayCtx = overlay.getContext('2d');
+
+    // ── Dynamic container sizing (replaces fixed CONTAINER_SIZE = 500) ───────
+    let containerWidth = 500;  // initial fallback, updated by ResizeObserver
+
+    function getContainerSize() {
+      return containerWidth;
+    }
+
+    function updateContainerSize() {
+      const rect = container.getBoundingClientRect();
+      containerWidth = Math.round(rect.width);
+      overlay.width = containerWidth;
+      overlay.height = containerWidth;
+      overlay.style.width = containerWidth + 'px';
+      overlay.style.height = containerWidth + 'px';
+    }
+
+    // ── Keyboard cursor state ────────────────────────────────────────────────
+    let kbCursorX = -1, kbCursorY = -1;
+    let kbMode = false;
+
+    // ── Zoom / Pan state ─────────────────────────────────────────────────────
+    const ZOOM_LEVELS = [1, 2, 4, 8, 16];
+    let zoomIndex = 2;  // index into ZOOM_LEVELS, default 4x
+    let zoom = ZOOM_LEVELS[zoomIndex]; // 4
+    let panX = 0;  // pan offset in CSS pixels (applied to translate)
+    let panY = 0;
+    const container = document.getElementById('canvas-container');
+
+    // ── ResizeObserver for fluid canvas ───────────────────────────────────────
+    const resizeObserver = new ResizeObserver(entries => {
+      for (const entry of entries) {
+        const w = Math.round(entry.contentRect.width);
+        if (w !== containerWidth && w > 0) {
+          containerWidth = w;
+          overlay.width = w;
+          overlay.height = w;
+          overlay.style.width = w + 'px';
+          overlay.style.height = w + 'px';
+          drawGrid();
+        }
+      }
+    });
+    resizeObserver.observe(container);
+
+    function clampPan() {
+      const containerSize = getContainerSize();
+      const canvasSize = WIDTH * SCALE;
+      const maxPan = containerSize / (2 * zoom);
+      const minPan = -(canvasSize - containerSize / (2 * zoom));
+      panX = Math.max(minPan, Math.min(maxPan, panX));
+      panY = Math.max(minPan, Math.min(maxPan, panY));
+    }
+
+    function drawGrid() {
+      const cs = getContainerSize();
+      overlayCtx.clearRect(0, 0, cs, cs);
+      if (zoom < 4) return;  // grid only at 4x and above
+
+      overlayCtx.strokeStyle = 'rgba(255, 255, 255, 0.18)';
+      overlayCtx.lineWidth = 1;
+      overlayCtx.beginPath();
+
+      // Draw grid lines in screen space — each logical pixel boundary mapped
+      // through zoom+pan to container coordinates. Lines are exactly 1 device pixel.
+      for (let x = 0; x <= WIDTH; x++) {
+        const sx = Math.round((x * SCALE + panX) * zoom) + 0.5;
+        if (sx < 0 || sx > cs) continue;
+        overlayCtx.moveTo(sx, 0);
+        overlayCtx.lineTo(sx, cs);
+      }
+      for (let y = 0; y <= HEIGHT; y++) {
+        const sy = Math.round((y * SCALE + panY) * zoom) + 0.5;
+        if (sy < 0 || sy > cs) continue;
+        overlayCtx.moveTo(0, sy);
+        overlayCtx.lineTo(cs, sy);
+      }
+      overlayCtx.stroke();
+      drawKeyboardCursor();
+    }
+
+    function applyTransform() {
+      const t = 'scale(' + zoom + ') translate(' + panX + 'px, ' + panY + 'px)';
+      canvas.style.transform = t;
+      // Overlay is NOT CSS-transformed — it draws in screen space
+      drawGrid();
+    }
+
+    function centerCanvas() {
+      const containerSize = getContainerSize();
+      const canvasSize = WIDTH * SCALE;
+      panX = -(canvasSize / 2 - containerSize / (2 * zoom));
+      panY = -(canvasSize / 2 - containerSize / (2 * zoom));
+      clampPan();
+    }
+
+    function screenToLogical(e) {
+      const rect = container.getBoundingClientRect();
+      const mouseContainerX = e.clientX - rect.left;
+      const mouseContainerY = e.clientY - rect.top;
+      const canvasX = mouseContainerX / zoom - panX;
+      const canvasY = mouseContainerY / zoom - panY;
+      const lx = Math.floor(canvasX / SCALE);
+      const ly = Math.floor(canvasY / SCALE);
+      return {
+        x: Math.max(0, Math.min(WIDTH - 1, lx)),
+        y: Math.max(0, Math.min(HEIGHT - 1, ly))
+      };
+    }
+
+    function updateCoordsDisplay(x, y) {
+      coordsEl.textContent = 'x: ' + (x != null ? x : '?') + ', y: ' + (y != null ? y : '?') + ' (' + zoom + 'x)';
+    }
+
+    // ── Debounce utility ──────────────────────────────────────────────────
+    function debounce(fn, ms) {
+      let timer;
+      return function(...args) {
+        clearTimeout(timer);
+        timer = setTimeout(() => fn.apply(this, args), ms);
+      };
+    }
+
+    // ── Relative time formatter ─────────────────────────────────────────────
+    function formatRelativeTime(isoString) {
+      const now = Date.now();
+      const placed = new Date(isoString).getTime();
+      const diffSec = Math.floor((now - placed) / 1000);
+      if (diffSec < 60) return 'just now';
+      const diffMin = Math.floor(diffSec / 60);
+      if (diffMin < 60) return diffMin + 'm ago';
+      const diffHr = Math.floor(diffMin / 60);
+      if (diffHr < 24) return diffHr + 'h ago';
+      const diffDay = Math.floor(diffHr / 24);
+      return diffDay + 'd ago';
+    }
+
+    // ── Pixel info cache ────────────────────────────────────────────────────
+    const pixelInfoCache = new Map();   // authorUuid -> { username, placedAt, authorPixels: [{x,y}] }
+    const coordToAuthor = new Map();    // "x,y" string -> authorUuid
+    let currentHighlightAuthor = null;  // authorUuid of currently highlighted author
+
+    // ── Tooltip display functions ───────────────────────────────────────────
+    function positionTooltip(tooltip, screenX, screenY) {
+      let left = screenX + 12;
+      let top = screenY + 8;
+      if (left + 200 > window.innerWidth) {
+        left = screenX - 12 - 200;
+      }
+      if (top + 60 > window.innerHeight) {
+        top = screenY - 8 - 60;
+      }
+      tooltip.style.left = left + 'px';
+      tooltip.style.top = top + 'px';
+    }
+
+    function showTooltipLoading(screenX, screenY) {
+      const tooltip = document.getElementById('tooltip');
+      const usernameEl = document.getElementById('tooltip-username');
+      const timeEl = document.getElementById('tooltip-time');
+      usernameEl.textContent = '...';
+      usernameEl.style.color = '#ffffff';
+      timeEl.textContent = '';
+      positionTooltip(tooltip, screenX, screenY);
+      tooltip.style.display = 'block';
+    }
+
+    function showTooltip(info, screenX, screenY) {
+      const tooltip = document.getElementById('tooltip');
+      const usernameEl = document.getElementById('tooltip-username');
+      const timeEl = document.getElementById('tooltip-time');
+      const currentUser = localStorage.getItem('bitbrush_username');
+      if (currentUser && info.username === currentUser) {
+        usernameEl.innerHTML = '<i>You</i>';
+      } else {
+        usernameEl.textContent = info.username;
+      }
+      usernameEl.style.color = '#ffffff';
+      timeEl.textContent = formatRelativeTime(info.placedAt);
+      positionTooltip(tooltip, screenX, screenY);
+      tooltip.style.display = 'block';
+    }
+
+    function hideTooltip() {
+      document.getElementById('tooltip').style.display = 'none';
+      clearAuthorHighlight();
+    }
+
+    // ── Author highlight rendering ──────────────────────────────────────────
+    function drawAuthorHighlight(authorPixels) {
+      clearAuthorHighlight();
+      if (!authorPixels || authorPixels.length === 0) return;
+      // Draw 1px white outlines in screen space (not on CSS-transformed canvas)
+      overlayCtx.strokeStyle = '#ffffff';
+      overlayCtx.lineWidth = 1;
+      const cellSize = Math.round(SCALE * zoom);
+      for (const p of authorPixels) {
+        const sx = Math.round((p.x * SCALE + panX) * zoom) + 0.5;
+        const sy = Math.round((p.y * SCALE + panY) * zoom) + 0.5;
+        overlayCtx.strokeRect(sx, sy, cellSize - 1, cellSize - 1);
+      }
+    }
+
+    function clearAuthorHighlight() {
+      drawGrid();
+      currentHighlightAuthor = null;
+    }
+
+    // ── Keyboard cursor rendering ────────────────────────────────────────────
+    function drawKeyboardCursor() {
+      if (!kbMode || kbCursorX < 0 || kbCursorY < 0) return;
+      const cs = getContainerSize();
+      const cellSize = Math.round(SCALE * zoom);
+      const sx = Math.round((kbCursorX * SCALE + panX) * zoom);
+      const sy = Math.round((kbCursorY * SCALE + panY) * zoom);
+
+      // Auto-contrast: check pixel luminance
+      const pixelIdx = ((kbCursorY * SCALE) * (WIDTH * SCALE) + (kbCursorX * SCALE)) * 4;
+      const r = imageData.data[pixelIdx];
+      const g = imageData.data[pixelIdx + 1];
+      const b = imageData.data[pixelIdx + 2];
+      const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+
+      overlayCtx.strokeStyle = luminance > 128 ? '#000000' : '#00cccc';
+      overlayCtx.lineWidth = 2;
+      overlayCtx.strokeRect(sx + 0.5, sy + 0.5, cellSize - 1, cellSize - 1);
+    }
+
+    function autoPanToKeyboardCursor() {
+      const cs = getContainerSize();
+      // Center the cursor pixel in the viewport
+      const targetPanX = cs / (2 * zoom) - kbCursorX * SCALE - SCALE / 2;
+      const targetPanY = cs / (2 * zoom) - kbCursorY * SCALE - SCALE / 2;
+      panX = targetPanX;
+      panY = targetPanY;
+      clampPan();
+      applyTransform();
+    }
+
+    // ── Debounced pixel info fetch ──────────────────────────────────────────
+    let lastHoverX = -1, lastHoverY = -1;
+
+    const debouncedFetchInfo = debounce(async (x, y, screenX, screenY) => {
+      const key = x + ',' + y;
+      const cachedAuthorUuid = coordToAuthor.get(key);
+      if (cachedAuthorUuid && pixelInfoCache.has(cachedAuthorUuid)) {
+        const cached = pixelInfoCache.get(cachedAuthorUuid);
+        showTooltip(cached, screenX, screenY);
+        drawAuthorHighlight(cached.authorPixels);
+        currentHighlightAuthor = cachedAuthorUuid;
+        return;
+      }
+
+      // Don't show loading tooltip before fetch — if the coordinate is empty (404),
+      // the "..." loading state would flash briefly before being hidden.
+      // Instead, only show the tooltip after we confirm pixel data exists.
+
+      try {
+        const resp = await fetch('/api/pixels/' + x + '/' + y + '/info');
+        if (!resp.ok) {
+          return;  // empty coordinate — show nothing
+        }
+        const info = await resp.json();
+
+        pixelInfoCache.set(info.authorUuid, info);
+        for (const p of info.authorPixels) {
+          coordToAuthor.set(p.x + ',' + p.y, info.authorUuid);
+        }
+
+        if (lastHoverX === x && lastHoverY === y) {
+          showTooltip(info, screenX, screenY);
+          drawAuthorHighlight(info.authorPixels);
+          currentHighlightAuthor = info.authorUuid;
+        }
+      } catch (err) {
+        hideTooltip();
+      }
+    }, 300);
+
+    // ── Palette (same order as PaletteConfig @Bean) ────────────────────────
+    // 216 web-safe colors: R outer loop, G middle loop, B inner loop
+    // Each hex is uppercase to match the server's stored format
+    const PALETTE = [
+      "#000000","#000033","#000066","#000099","#0000CC","#0000FF",
+      "#003300","#003333","#003366","#003399","#0033CC","#0033FF",
+      "#006600","#006633","#006666","#006699","#0066CC","#0066FF",
+      "#009900","#009933","#009966","#009999","#0099CC","#0099FF",
+      "#00CC00","#00CC33","#00CC66","#00CC99","#00CCCC","#00CCFF",
+      "#00FF00","#00FF33","#00FF66","#00FF99","#00FFCC","#00FFFF",
+      "#330000","#330033","#330066","#330099","#3300CC","#3300FF",
+      "#333300","#333333","#333366","#333399","#3333CC","#3333FF",
+      "#336600","#336633","#336666","#336699","#3366CC","#3366FF",
+      "#339900","#339933","#339966","#339999","#3399CC","#3399FF",
+      "#33CC00","#33CC33","#33CC66","#33CC99","#33CCCC","#33CCFF",
+      "#33FF00","#33FF33","#33FF66","#33FF99","#33FFCC","#33FFFF",
+      "#660000","#660033","#660066","#660099","#6600CC","#6600FF",
+      "#663300","#663333","#663366","#663399","#6633CC","#6633FF",
+      "#666600","#666633","#666666","#666699","#6666CC","#6666FF",
+      "#669900","#669933","#669966","#669999","#6699CC","#6699FF",
+      "#66CC00","#66CC33","#66CC66","#66CC99","#66CCCC","#66CCFF",
+      "#66FF00","#66FF33","#66FF66","#66FF99","#66FFCC","#66FFFF",
+      "#990000","#990033","#990066","#990099","#9900CC","#9900FF",
+      "#993300","#993333","#993366","#993399","#9933CC","#9933FF",
+      "#996600","#996633","#996666","#996699","#9966CC","#9966FF",
+      "#999900","#999933","#999966","#999999","#9999CC","#9999FF",
+      "#99CC00","#99CC33","#99CC66","#99CC99","#99CCCC","#99CCFF",
+      "#99FF00","#99FF33","#99FF66","#99FF99","#99FFCC","#99FFFF",
+      "#CC0000","#CC0033","#CC0066","#CC0099","#CC00CC","#CC00FF",
+      "#CC3300","#CC3333","#CC3366","#CC3399","#CC33CC","#CC33FF",
+      "#CC6600","#CC6633","#CC6666","#CC6699","#CC66CC","#CC66FF",
+      "#CC9900","#CC9933","#CC9966","#CC9999","#CC99CC","#CC99FF",
+      "#CCCC00","#CCCC33","#CCCC66","#CCCC99","#CCCCCC","#CCCCFF",
+      "#CCFF00","#CCFF33","#CCFF66","#CCFF99","#CCFFCC","#CCFFFF",
+      "#FF0000","#FF0033","#FF0066","#FF0099","#FF00CC","#FF00FF",
+      "#FF3300","#FF3333","#FF3366","#FF3399","#FF33CC","#FF33FF",
+      "#FF6600","#FF6633","#FF6666","#FF6699","#FF66CC","#FF66FF",
+      "#FF9900","#FF9933","#FF9966","#FF9999","#FF99CC","#FF99FF",
+      "#FFCC00","#FFCC33","#FFCC66","#FFCC99","#FFCCCC","#FFCCFF",
+      "#FFFF00","#FFFF33","#FFFF66","#FFFF99","#FFFFCC","#FFFFFF"
+    ];
+
+    let selectedPaletteIndex = 0; // set to first chromatic color during palette init
+
+    // ── Bank state ─────────────────────────────────────────────────────────────
+    let localBalance = 5;       // updated by server push; starts at STARTING_BALANCE
+    let localMaxBalance = 25;   // updated by server push
+    // countdownTimer replaced by bankProgressInterval (progress bar)
+
+    // ── HSL conversion and sorting ──────────────────────────────────────────
+    function hexToHsl(hex) {
+      let r = parseInt(hex.slice(1, 3), 16) / 255;
+      let g = parseInt(hex.slice(3, 5), 16) / 255;
+      let b = parseInt(hex.slice(5, 7), 16) / 255;
+      const max = Math.max(r, g, b), min = Math.min(r, g, b);
+      let h, s, l = (max + min) / 2;
+      if (max === min) {
+        h = s = 0;
+      } else {
+        const d = max - min;
+        s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+        switch (max) {
+          case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+          case g: h = (b - r) / d + 2; break;
+          case b: h = (r - g) / d + 4; break;
+        }
+        h /= 6;
+      }
+      return [h * 360, s * 100, l * 100];
+    }
+
+    function isLightColor(hex) {
+      const r = parseInt(hex.slice(1, 3), 16);
+      const g = parseInt(hex.slice(3, 5), 16);
+      const b = parseInt(hex.slice(5, 7), 16);
+      return (r + g + b) / 3 > 204;
+    }
+
+    function sortPaletteByHsl(palette) {
+      const withHsl = palette.map((hex, i) => ({
+        hex, originalIndex: i, hsl: hexToHsl(hex)
+      }));
+      // Achromatic: saturation === 0 (pure grays, black, white)
+      const achromatic = withHsl.filter(c => c.hsl[1] === 0);
+      // Near-achromatic: very low saturation, looks gray-ish
+      const nearAchromatic = withHsl.filter(c => c.hsl[1] > 0 && c.hsl[1] <= 15);
+      const chromatic = withHsl.filter(c => c.hsl[1] > 15);
+
+      achromatic.sort((a, b) => a.hsl[2] - b.hsl[2]);
+      nearAchromatic.sort((a, b) => a.hsl[2] - b.hsl[2]);
+
+      // Sort chromatic by hue bins (30-degree bands) then by lightness within each bin
+      // This creates smooth rainbow rows: red -> orange -> yellow -> green -> cyan -> blue -> purple -> pink
+      chromatic.sort((a, b) => {
+        const hueBinA = Math.floor(a.hsl[0] / 30);
+        const hueBinB = Math.floor(b.hsl[0] / 30);
+        if (hueBinA !== hueBinB) return hueBinA - hueBinB;
+        // Within same hue bin, sort by lightness (dark to light)
+        return a.hsl[2] - b.hsl[2];
+      });
+
+      const eraser = withHsl.filter(c => c.originalIndex === 0);
+      const achromaticNoEraser = achromatic.filter(c => c.originalIndex !== 0);
+      return [...chromatic, ...nearAchromatic, ...achromaticNoEraser, ...eraser];
+    }
+
+    // ── Recently-used colors (memory only, no localStorage) ──────────────────
+    const recentColors = [];
+
+    function addRecentColor(hex) {
+      const idx = recentColors.indexOf(hex);
+      if (idx !== -1) recentColors.splice(idx, 1);
+      recentColors.unshift(hex);
+      if (recentColors.length > 6) recentColors.pop();
+      renderRecentColors();
+    }
+
+    function renderRecentColors() {
+      const container = document.getElementById('recent-colors');
+      container.innerHTML = '';
+      for (let i = 0; i < 6; i++) {
+        const el = document.createElement('div');
+        if (i < recentColors.length) {
+          const hex = recentColors[i];
+          el.className = 'recent-swatch';
+          el.style.backgroundColor = hex;
+          el.title = hex;
+          el.addEventListener('click', () => {
+            const origIdx = PALETTE.indexOf(hex);
+            if (origIdx !== -1) {
+              selectColor(origIdx, hex);
+            }
+          });
+        } else {
+          el.className = 'recent-swatch empty';
+        }
+        container.appendChild(el);
+      }
+    }
+
+    // ── Color preview ────────────────────────────────────────────────────────
+    function updateColorPreview(hex) {
+      const swatch = document.getElementById('color-preview-swatch');
+      const hexLabel = document.getElementById('color-preview-hex');
+      if (selectedPaletteIndex === 0) {
+        swatch.style.backgroundColor = '#1a1a1a';
+        swatch.style.borderColor = '#ff4444';
+        hexLabel.textContent = 'Eraser';
+      } else {
+        swatch.style.backgroundColor = hex;
+        if (isLightColor(hex)) {
+          swatch.style.borderColor = '#000000';
+        } else {
+          swatch.style.borderColor = '#ffffff';
+        }
+        hexLabel.textContent = hex;
+      }
+    }
+
+    // ── Unified color selection ──────────────────────────────────────────────
+    function selectColor(paletteIndex, hex) {
+      if (activeSwatch) {
+        activeSwatch.classList.remove('active');
+        activeSwatch.style.borderColor = 'transparent';
+        activeSwatch.style.boxShadow = '';
+      }
+      const newActive = paletteEl.querySelector('[data-palette-index="' + paletteIndex + '"]');
+      if (newActive) {
+        newActive.classList.add('active');
+        if (paletteIndex === 0) {
+          newActive.style.borderColor = '#ff4444';
+          newActive.style.boxShadow = '0 0 8px rgba(255, 68, 68, 0.3)';
+        } else if (isLightColor(hex)) {
+          // Light colors: black border instead of cyan glow (cyan invisible on white)
+          newActive.style.borderColor = '#000000';
+          newActive.style.boxShadow = '0 0 6px rgba(0, 0, 0, 0.4)';
+        } else {
+          newActive.style.borderColor = '#ffffff';
+          newActive.style.boxShadow = '0 0 8px rgba(0, 204, 204, 0.3)';
+        }
+        activeSwatch = newActive;
+      }
+      selectedPaletteIndex = paletteIndex;
+      updateColorPreview(hex);
+      if (paletteIndex !== 0) addRecentColor(hex);
+      updateDrawerStrip();
+    }
+
+    // ── Palette grid (HSL sorted) ────────────────────────────────────────────
+    const paletteEl = document.getElementById('palette');
+    let activeSwatch = null;
+
+    const sortedPalette = sortPaletteByHsl(PALETTE);
+
+    sortedPalette.forEach((item) => {
+      const swatch = document.createElement('div');
+      swatch.className = 'swatch';
+      if (item.originalIndex === 0) {
+        swatch.classList.add('eraser-swatch');
+        swatch.title = 'Eraser';
+        swatch.setAttribute('aria-label', 'Eraser tool');
+      } else {
+        swatch.style.backgroundColor = item.hex;
+        swatch.title = item.hex;
+        swatch.setAttribute('aria-label', 'Color ' + item.hex);
+      }
+      swatch.setAttribute('data-palette-index', item.originalIndex);
+      swatch.setAttribute('role', 'option');
+      swatch.addEventListener('click', () => {
+        selectColor(item.originalIndex, item.hex);
+      });
+      paletteEl.appendChild(swatch);
+    });
+
+    // Set initial selection: first chromatic color (skip eraser and near-black grays)
+    const firstChromatic = sortedPalette.find(item => {
+      const hsl = hexToHsl(item.hex);
+      return item.originalIndex !== 0 && hsl[1] > 15;
+    });
+    selectedPaletteIndex = firstChromatic ? firstChromatic.originalIndex : 1;
+    activeSwatch = paletteEl.querySelector('[data-palette-index="' + selectedPaletteIndex + '"]');
+    if (activeSwatch) {
+      activeSwatch.classList.add('active');
+      if (isLightColor(PALETTE[selectedPaletteIndex])) {
+        activeSwatch.style.borderColor = '#000000';
+        activeSwatch.style.boxShadow = '0 0 6px rgba(0, 0, 0, 0.4)';
+      } else {
+        activeSwatch.style.borderColor = '#ffffff';
+        activeSwatch.style.boxShadow = '0 0 8px rgba(0, 204, 204, 0.3)';
+      }
+    }
+    updateColorPreview(PALETTE[selectedPaletteIndex]);
+
+    // ── Palette keyboard navigation ──────────────────────────────────────────
+    let paletteFocusIndex = 0;
+    const PALETTE_COLS = 12; // matches grid-template-columns
+
+    paletteEl.addEventListener('keydown', (e) => {
+      const swatches = paletteEl.querySelectorAll('.swatch');
+      const total = swatches.length;
+      if (total === 0) return;
+
+      let handled = true;
+      if (e.key === 'ArrowRight') {
+        paletteFocusIndex = Math.min(total - 1, paletteFocusIndex + 1);
+      } else if (e.key === 'ArrowLeft') {
+        paletteFocusIndex = Math.max(0, paletteFocusIndex - 1);
+      } else if (e.key === 'ArrowDown') {
+        paletteFocusIndex = Math.min(total - 1, paletteFocusIndex + PALETTE_COLS);
+      } else if (e.key === 'ArrowUp') {
+        paletteFocusIndex = Math.max(0, paletteFocusIndex - PALETTE_COLS);
+      } else if (e.key === ' ') {
+        // Select the focused swatch
+        const swatch = swatches[paletteFocusIndex];
+        if (swatch) {
+          const idx = parseInt(swatch.getAttribute('data-palette-index'));
+          selectColor(idx, PALETTE[idx]);
+        }
+      } else {
+        handled = false;
+      }
+
+      if (handled) {
+        e.preventDefault();
+        // Visual focus indicator on the focused swatch
+        swatches.forEach(s => s.classList.remove('palette-focused'));
+        if (swatches[paletteFocusIndex]) {
+          swatches[paletteFocusIndex].classList.add('palette-focused');
+          swatches[paletteFocusIndex].scrollIntoView({ block: 'nearest' });
+        }
+      }
+    });
+
+    paletteEl.addEventListener('blur', () => {
+      paletteEl.querySelectorAll('.palette-focused').forEach(s => s.classList.remove('palette-focused'));
+    });
+
+    // ── Pixel rendering ───────────────────────────────────────────────────────
+    function hexToRgb(hex) {
+      const n = parseInt(hex.slice(1), 16);
+      return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+    }
+
+    /**
+     * Paint a logical pixel at (x, y) into the ImageData buffer.
+     * @param {number} x - logical x (0-249)
+     * @param {number} y - logical y (0-249)
+     * @param {string} hexColor - hex color string e.g. "#FF0000"
+     * @param {boolean} [flush=true] - call putImageData after painting (set false for bulk load)
+     */
+    function paintPixelInBuffer(x, y, hexColor, flush) {
+      const [r, g, b] = hexToRgb(hexColor);
+      for (let dy = 0; dy < SCALE; dy++) {
+        for (let dx = 0; dx < SCALE; dx++) {
+          const idx = ((y * SCALE + dy) * (WIDTH * SCALE) + (x * SCALE + dx)) * 4;
+          imageData.data[idx]     = r;
+          imageData.data[idx + 1] = g;
+          imageData.data[idx + 2] = b;
+          // alpha already 255
+        }
+      }
+      if (flush !== false) {
+        ctx.putImageData(imageData, 0, 0);
+      }
+    }
+
+    function isPixelEmpty(x, y) {
+      const idx = ((y * SCALE) * (WIDTH * SCALE) + (x * SCALE)) * 4;
+      return imageData.data[idx] === 0 && imageData.data[idx + 1] === 0 && imageData.data[idx + 2] === 0;
+    }
+
+    // ── Cursor coordinates ────────────────────────────────────────────────────
+    const coordsEl = document.getElementById('coords');
+
+    // ── Canvas load ───────────────────────────────────────────────────────────
+    async function loadCanvas() {
+      try {
+        const resp = await fetch('/api/canvas');
+        if (!resp.ok) {
+          console.error('Failed to load canvas:', resp.status);
+          return;
+        }
+        const pixels = await resp.json();
+        // Paint all pixels into buffer without flushing (batch mode)
+        pixels.forEach(p => paintPixelInBuffer(p.x, p.y, p.color, false));
+        // Single flush after all pixels are painted
+        ctx.putImageData(imageData, 0, 0);
+      } catch (err) {
+        console.error('Canvas load error:', err);
+      }
+    }
+
+    // ── Screen reader announcements ──────────────────────────────────────────
+    function announce(message) {
+      const el = document.getElementById('sr-announce');
+      if (el) {
+        el.textContent = '';
+        // Force reflow so screen reader detects the change even if same text
+        void el.offsetHeight;
+        el.textContent = message;
+      }
+    }
+
+    // ── WebSocket / STOMP ─────────────────────────────────────────────────────
+    function updateConnectionStatus(state) {
+      const dot  = document.getElementById('status-dot');
+      const text = document.getElementById('status-text');
+      if (state === 'connected') {
+        dot.style.background = '#00cc00';
+        dot.style.boxShadow = '0 0 6px #00cc00';
+        // Text set by updateOnlineCount -- announce happens there
+      } else if (state === 'reconnecting') {
+        dot.style.background = '#cccc00';
+        dot.style.boxShadow = '0 0 6px #cccc00';
+        text.textContent = 'reconnecting...';
+        announce('Reconnecting');
+      } else if (state === 'disconnected') {
+        dot.style.background = '#cc0000';
+        dot.style.boxShadow = '0 0 6px #cc0000';
+        text.textContent = 'disconnected';
+        announce('Disconnected');
+      }
+    }
+
+    function updateOnlineCount(count) {
+      document.getElementById('status-text').textContent = count + ' online';
+    }
+
+    function renderBankDisplay(balance, maxBalance, secondsUntil) {
+      const balanceEl = document.getElementById('bank-balance');
+      if (balanceEl) balanceEl.textContent = balance + '/' + maxBalance;
+      // Update cursor
+      document.getElementById('canvas').style.cursor =
+        balance <= 0 ? 'not-allowed' : 'crosshair';
+      updateDrawerStrip();
+    }
+
+    // Progress bar: CSS-transition driven, synced to server earn cycle
+    // Spinner = unknown timing. Bar = synced to observed earn rate.
+    // Guard: on connect, the server delivers a burst of queued earn messages in
+    // the same event-loop tick.  Without protection the barber-pole is shown then
+    // immediately overwritten by startProgressBar() before a frame renders.
+    // progressLockedUntil holds a timestamp; other progress functions are no-ops
+    // until Date.now() exceeds it.  500 ms covers any burst while the next real
+    // earn tick (≥ 1 s away) will always get through.
+    let progressLockedUntil = 0;
+    let earnCycleDuration = 0; // learned when we first observe a point earned
+    let earnCycleKnown = false; // true after first observed earn
+
+    function setProgressBars(fn) {
+      const fill = document.getElementById('bank-progress-fill');
+      const drawerFill = document.getElementById('drawer-progress-fill');
+      if (fill) fn(fill);
+      if (drawerFill) fn(drawerFill);
+    }
+
+    function startProgressBar(seconds) {
+      if (Date.now() < progressLockedUntil) return;
+      // Shorten slightly to account for network latency — bar hits 100%
+      // just before the server notification arrives rather than after
+      const duration = Math.max(0.5, seconds - 0.3);
+      setProgressBars(el => {
+        el.classList.remove('progress-indeterminate');
+        el.style.transition = 'none';
+        el.style.width = '0%';
+        void el.offsetWidth;
+        el.style.transition = 'width ' + duration + 's linear';
+        el.style.width = '100%';
+      });
+    }
+
+    function showIndeterminateProgress() {
+      progressLockedUntil = Date.now() + 500;
+      setProgressBars(el => {
+        el.style.transition = 'none';
+        el.style.width = '';
+        el.classList.add('progress-indeterminate');
+      });
+    }
+
+    function showProgressFull() {
+      if (Date.now() < progressLockedUntil) return;
+      setProgressBars(el => {
+        el.classList.remove('progress-indeterminate');
+        el.style.transition = 'none';
+        el.style.width = '100%';
+      });
+    }
+
+    // Progress bar starts hidden (width: 0%). First updateBankDisplay call
+    // decides whether to show spinner (not at max) or full bar (at max).
+    let bankInitialized = false;
+
+    function updateBankDisplay(state) {
+      const prevBalance = localBalance;
+      localBalance = state.balance;
+      localMaxBalance = state.maxBalance;
+      renderBankDisplay(state.balance, state.maxBalance, state.secondsUntilNextPoint);
+
+      if (state.balance > prevBalance) {
+        // Point earned — learn cycle duration regardless of hitting max
+        earnCycleDuration = state.secondsUntilNextPoint;
+        earnCycleKnown = true;
+      }
+
+      if (!bankInitialized) {
+        // First server response — timing unknown, show barber-pole until first earn tick
+        bankInitialized = true;
+        showIndeterminateProgress();
+      } else if (state.balance >= state.maxBalance) {
+        // Full — solid bar
+        showProgressFull();
+      } else if (state.balance > prevBalance) {
+        // Earned but not full — seamlessly start next cycle
+        startProgressBar(earnCycleDuration);
+      }
+      // Spend or no-change: leave bar in current state (CSS transition continues undisturbed)
+      // Flash animations
+      const balanceEl = document.getElementById('bank-balance');
+      if (!balanceEl) return;
+      if (state.balance > prevBalance) {
+        // Earned a point — green flash
+        balanceEl.style.color = '#00cc00';
+        setTimeout(() => { const el = document.getElementById('bank-balance'); if (el) el.style.color = '#00cccc'; }, 300);
+      } else if (state.balance < prevBalance) {
+        // Spent a point — brief dim
+        balanceEl.style.color = '#666666';
+        setTimeout(() => { const el = document.getElementById('bank-balance'); if (el) el.style.color = '#00cccc'; }, 200);
+      }
+      if (state.balance === 0 && prevBalance > 0) {
+        announce('No pixels remaining');
+      }
+      updateDrawerStrip();
+    }
+
+    function flashBalanceRed() {
+      const balanceEl = document.getElementById('bank-balance');
+      if (!balanceEl) return;
+      balanceEl.style.color = '#ff6666';
+      setTimeout(() => { const el = document.getElementById('bank-balance'); if (el) el.style.color = '#00cccc'; }, 400);
+      announce('No pixels remaining');
+    }
+
+    function connectWebSocket() {
+      const client = new StompJs.Client({
+        webSocketFactory: () => new SockJS('/ws'),
+        connectHeaders: { uuid: localStorage.getItem('bitbrush_uuid') || '' },
+        reconnectDelay: 5000,
+        heartbeatIncoming: 10000,
+        heartbeatOutgoing: 10000,
+        debug: (str) => console.log('[STOMP]', str)
+      });
+
+      client.onConnect = () => {
+        // Subscribe to pixel broadcasts -- re-established on every reconnect
+        client.subscribe('/topic/pixels', (message) => {
+          const p = JSON.parse(message.body);
+          paintPixelInBuffer(p.x, p.y, p.color);
+
+          const coordKey = p.x + ',' + p.y;
+          if (p.erased) {
+            // Erased pixel: clear coordinate from caches so tooltip won't show
+            const previousAuthor = coordToAuthor.get(coordKey);
+            if (previousAuthor) {
+              pixelInfoCache.delete(previousAuthor);
+            }
+            coordToAuthor.delete(coordKey);
+          } else {
+            // Normal pixel: smart cache invalidation (existing logic)
+            const previousAuthor = coordToAuthor.get(coordKey);
+            const newAuthor = p.authorUuid;
+            if (previousAuthor && previousAuthor !== newAuthor) {
+              pixelInfoCache.delete(previousAuthor);
+            }
+            if (newAuthor) {
+              pixelInfoCache.delete(newAuthor);
+            }
+            if (newAuthor) {
+              coordToAuthor.set(coordKey, newAuthor);
+            }
+          }
+        });
+
+        // Subscribe to user count broadcasts -- re-established on every reconnect
+        client.subscribe('/topic/users/count', (message) => {
+          const count = parseInt(message.body, 10);
+          updateOnlineCount(count);
+        });
+
+        // Request the current count immediately after subscribing (fixes race condition:
+        // SessionConnectEvent fires before this subscription is set up, so the new client
+        // misses its own join broadcast on /topic/users/count).
+        // @SubscribeMapping on /app/users/count replies directly to this client only.
+        client.subscribe('/app/users/count', (message) => {
+          const count = parseInt(message.body, 10);
+          updateOnlineCount(count);
+        });
+
+        // Subscribe to ongoing bank state pushes (per-user, not broadcast)
+        client.subscribe('/user/queue/bank', (message) => {
+          const state = JSON.parse(message.body);
+          updateBankDisplay(state);
+        });
+
+        // Request initial bank state immediately on subscribe (same race-condition fix as /app/users/count)
+        client.subscribe('/app/bank', (message) => {
+          const state = JSON.parse(message.body);
+          updateBankDisplay(state);
+        });
+
+        // RTME-03: re-fetch full canvas state on every connect (including reconnects)
+        loadCanvas();
+
+        updateConnectionStatus('connected');
+      };
+
+      client.onWebSocketClose = () => {
+        // StompJs.Client will auto-reconnect -- show yellow dot while waiting
+        updateConnectionStatus('reconnecting');
+      };
+
+      client.activate();
+      return client;
+    }
+
+    // ── Identity / username modal ─────────────────────────────────────────────
+    function getOrCreateUuid() {
+      let uuid = localStorage.getItem('bitbrush_uuid');
+      if (!uuid) {
+        uuid = crypto.randomUUID();
+        localStorage.setItem('bitbrush_uuid', uuid);
+      }
+      return uuid;
+    }
+
+    function showModal(uuid) {
+      const overlay = document.getElementById('modal-overlay');
+      overlay.style.display = 'flex';
+
+      const input    = document.getElementById('username-input');
+      const errorEl  = document.getElementById('modal-error');
+      const submitBtn = document.getElementById('username-submit');
+
+      // Focus the input after modal opens
+      setTimeout(() => input.focus(), 100);
+
+      // Allow Enter key to submit
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') submitBtn.click();
+      });
+
+      submitBtn.addEventListener('click', async () => {
+        const username = input.value.trim();
+        errorEl.textContent = '';
+
+        if (username.length < 3 || username.length > 30) {
+          errorEl.textContent = 'Username must be 3-30 characters';
+          return;
+        }
+
+        if (username.toLowerCase() === 'you') {
+          errorEl.textContent = "Username 'You' is reserved";
+          return;
+        }
+
+        try {
+          const resp = await fetch('/api/users', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ uuid, username })
+          });
+
+          if (resp.status === 201) {
+            localStorage.setItem('bitbrush_username', username);
+            overlay.style.display = 'none';
+            // Show hint overlay for first-time users
+            setTimeout(showHintOverlay, 300);
+          } else {
+            let msg = 'Registration failed';
+            try {
+              const err = await resp.json();
+              msg = err.detail || msg;
+            } catch (_) { /* ignore parse error */ }
+            errorEl.textContent = msg;
+          }
+        } catch (err) {
+          errorEl.textContent = 'Network error — please try again';
+          console.error('User registration error:', err);
+        }
+      });
+    }
+
+    async function initIdentity() {
+      const uuid = getOrCreateUuid();
+      const username = localStorage.getItem('bitbrush_username');
+      if (!username) {
+        showModal(uuid);
+      } else {
+        // Re-register silently — DB may have been reset (ddl-auto=create)
+        try {
+          await fetch('/api/users', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ uuid, username })
+          });
+        } catch (_) { /* best effort */ }
+        // Show hints if returning user hasn't seen them
+        showHintOverlay();
+      }
+    }
+
+    // ── Zoom handler (scroll wheel) ──────────────────────────────────────────
+    container.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const rect = container.getBoundingClientRect();
+      // Mouse position in container coordinates
+      const mouseContainerX = e.clientX - rect.left;
+      const mouseContainerY = e.clientY - rect.top;
+      // Mouse position in canvas-space before zoom
+      const beforeX = mouseContainerX / zoom - panX;
+      const beforeY = mouseContainerY / zoom - panY;
+
+      // Step zoom
+      if (e.deltaY < 0 && zoomIndex < ZOOM_LEVELS.length - 1) {
+        zoomIndex++;
+      } else if (e.deltaY > 0 && zoomIndex > 0) {
+        zoomIndex--;
+      }
+      zoom = ZOOM_LEVELS[zoomIndex];
+
+      // Adjust pan so mouse stays on same canvas point after zoom
+      panX = mouseContainerX / zoom - beforeX;
+      panY = mouseContainerY / zoom - beforeY;
+      clampPan();
+      applyTransform();
+      const logical = screenToLogical(e);
+      updateCoordsDisplay(logical.x, logical.y);
+    }, { passive: false });
+
+    // ── Pan handler (right-click drag) ───────────────────────────────────────
+    container.addEventListener('contextmenu', (e) => e.preventDefault());
+
+    let isPanning = false;
+    let panStartX = 0, panStartY = 0;
+    let panStartPanX = 0, panStartPanY = 0;
+
+    container.addEventListener('mousedown', (e) => {
+      if (e.button === 2) {
+        isPanning = true;
+        panStartX = e.clientX;
+        panStartY = e.clientY;
+        panStartPanX = panX;
+        panStartPanY = panY;
+        container.style.cursor = 'grabbing';
+        e.preventDefault();
+      }
+    });
+
+    window.addEventListener('mousemove', (e) => {
+      if (isPanning) {
+        const dx = (e.clientX - panStartX) / zoom;
+        const dy = (e.clientY - panStartY) / zoom;
+        panX = panStartPanX + dx;
+        panY = panStartPanY + dy;
+        clampPan();
+        applyTransform();
+      }
+    });
+
+    window.addEventListener('mouseup', (e) => {
+      if (isPanning && e.button === 2) {
+        isPanning = false;
+        container.style.cursor = '';
+      }
+    });
+
+    // ── Coordinates display + tooltip trigger (mousemove on container) ────
+    container.addEventListener('mousemove', (e) => {
+      if (kbMode) {
+        kbMode = false;
+        drawGrid(); // Clear keyboard cursor from overlay
+      }
+      if (isPanning) return;
+      const { x, y } = screenToLogical(e);
+      updateCoordsDisplay(x, y);
+
+      // Tooltip trigger (only when not dragging and not panning)
+      if (!isDragging && !isPanning) {
+        if (x !== lastHoverX || y !== lastHoverY) {
+          // Clear previous highlight and tooltip immediately on pixel change
+          hideTooltip();
+          lastHoverX = x;
+          lastHoverY = y;
+          debouncedFetchInfo(x, y, e.clientX, e.clientY);
+        }
+      }
+      // Hide tooltip during drag
+      if (isDragging) {
+        hideTooltip();
+      }
+    });
+
+    // ── Hide tooltip on mouseleave ───────────────────────────────────────────
+    container.addEventListener('mouseleave', () => {
+      hideTooltip();
+      lastHoverX = -1;
+      lastHoverY = -1;
+    });
+
+    // ── Canvas keyboard navigation ──────────────────────────────────────────
+    container.addEventListener('keydown', (e) => {
+      // Only handle when canvas container is focused
+      if (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === ' ') {
+        e.preventDefault();
+      } else {
+        return;
+      }
+
+      // Activate keyboard mode on first arrow key
+      if (!kbMode) {
+        kbMode = true;
+        if (kbCursorX < 0) {
+          // Start at center of canvas
+          kbCursorX = Math.floor(WIDTH / 2);
+          kbCursorY = Math.floor(HEIGHT / 2);
+        }
+      }
+
+      if (e.key === 'ArrowUp') {
+        kbCursorY = Math.max(0, kbCursorY - 1);
+        autoPanToKeyboardCursor();
+      } else if (e.key === 'ArrowDown') {
+        kbCursorY = Math.min(HEIGHT - 1, kbCursorY + 1);
+        autoPanToKeyboardCursor();
+      } else if (e.key === 'ArrowLeft') {
+        kbCursorX = Math.max(0, kbCursorX - 1);
+        autoPanToKeyboardCursor();
+      } else if (e.key === 'ArrowRight') {
+        kbCursorX = Math.min(WIDTH - 1, kbCursorX + 1);
+        autoPanToKeyboardCursor();
+      } else if (e.key === ' ') {
+        // Place pixel at keyboard cursor position
+        const username = localStorage.getItem('bitbrush_username');
+        const uuid = localStorage.getItem('bitbrush_uuid');
+        if (!username || !uuid) return;
+
+        if (localBalance <= 0) {
+          flashBalanceRed();
+          return;
+        }
+        if (selectedPaletteIndex === 0 && isPixelEmpty(kbCursorX, kbCursorY)) return; // eraser on empty cell: no-op
+
+        // Optimistic local paint
+        paintPixelInBuffer(kbCursorX, kbCursorY, PALETTE[selectedPaletteIndex]);
+
+        // Optimistic balance decrement
+        const wasAtMax = localBalance >= localMaxBalance;
+        localBalance = Math.max(0, localBalance - 1);
+        const balanceDisplay = document.getElementById('bank-balance');
+        if (balanceDisplay) balanceDisplay.textContent = localBalance + '/' + localMaxBalance;
+        canvas.style.cursor = localBalance <= 0 ? 'not-allowed' : 'crosshair';
+        if (wasAtMax) showIndeterminateProgress();
+
+        // Send placement to server
+        fetch('/api/pixels', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            pixels: [{ x: kbCursorX, y: kbCursorY }],
+            paletteIndex: selectedPaletteIndex,
+            authorUuid: uuid
+          })
+        }).then(resp => {
+          if (resp.ok) fetchStats();
+          else if (resp.status === 429) flashBalanceRed();
+        }).catch(err => console.error('Keyboard pixel placement error:', err));
+
+        // Redraw cursor after pixel change
+        drawGrid();
+      }
+
+      // Update coordinates display
+      updateCoordsDisplay(kbCursorX, kbCursorY);
+    });
+
+    // ── Bresenham line interpolation ────────────────────────────────────────
+    function bresenhamLine(x0, y0, x1, y1) {
+      const points = [];
+      let dx = Math.abs(x1 - x0);
+      let sx = x0 < x1 ? 1 : -1;
+      let dy = -Math.abs(y1 - y0);
+      let sy = y0 < y1 ? 1 : -1;
+      let error = dx + dy;
+      while (true) {
+        points.push({ x: x0, y: y0 });
+        if (x0 === x1 && y0 === y1) break;
+        let e2 = 2 * error;
+        if (e2 >= dy) { error += dy; x0 += sx; }
+        if (e2 <= dx) { error += dx; y0 += sy; }
+      }
+      return points;
+    }
+
+    // ── Drag-to-place state ──────────────────────────────────────────────────
+    let isDragging = false;
+    let dragPixels = new Set();     // "x,y" strings for deduplication
+    let dragPixelList = [];         // [{x, y}] in order (for batch POST)
+    let lastDragX = -1, lastDragY = -1;  // last logical pixel during drag
+
+    function placePixelDuringDrag(x, y) {
+      const key = x + ',' + y;
+      if (dragPixels.has(key)) return;  // deduplicate
+      if (localBalance <= 0) return;     // stop placing silently when balance hits 0
+      if (selectedPaletteIndex === 0 && isPixelEmpty(x, y)) return; // eraser on empty cell: no-op
+
+      dragPixels.add(key);
+      dragPixelList.push({ x, y });
+
+      // Optimistic local paint
+      paintPixelInBuffer(x, y, PALETTE[selectedPaletteIndex]);
+
+      // Optimistic balance decrement
+      const wasAtMax = localBalance >= localMaxBalance;
+      localBalance = Math.max(0, localBalance - 1);
+      const balanceDisplay = document.getElementById('bank-balance');
+      if (balanceDisplay) balanceDisplay.textContent = localBalance + '/' + localMaxBalance;
+      canvas.style.cursor = localBalance <= 0 ? 'not-allowed' : 'crosshair';
+      if (wasAtMax) showIndeterminateProgress();
+    }
+
+    // ── Pixel placement (mousedown starts drag or single-click) ─────────────
+    container.addEventListener('mousedown', (e) => {
+      if (e.button === 2) return;  // right-click pan handled above
+      if (e.button !== 0) return;  // only left-click
+      if (isPanning) return;       // don't place while panning
+
+      const username = localStorage.getItem('bitbrush_username');
+      const uuid = localStorage.getItem('bitbrush_uuid');
+      if (!username || !uuid) return;
+
+      if (localBalance <= 0) {
+        flashBalanceRed();
+        return;
+      }
+
+      const { x, y } = screenToLogical(e);
+      isDragging = true;
+      dragPixels = new Set();
+      dragPixelList = [];
+      lastDragX = x;
+      lastDragY = y;
+
+      placePixelDuringDrag(x, y);
+    });
+
+    // ── Drag mousemove (extends drag path with Bresenham interpolation) ──────
+    // Note: merged with coords display -- the separate container mousemove above
+    // handles coords when NOT dragging. This window listener handles drag extension.
+    window.addEventListener('mousemove', (e) => {
+      if (!isDragging) return;
+      if (isPanning) return;
+
+      const { x, y } = screenToLogical(e);
+
+      if (x !== lastDragX || y !== lastDragY) {
+        const points = bresenhamLine(lastDragX, lastDragY, x, y);
+        // Skip first point (it's lastDrag, already placed)
+        for (let i = 1; i < points.length; i++) {
+          placePixelDuringDrag(points[i].x, points[i].y);
+        }
+        lastDragX = x;
+        lastDragY = y;
+      }
+    });
+
+    // ── Drag mouseup (sends batch POST) ──────────────────────────────────────
+    window.addEventListener('mouseup', async (e) => {
+      if (!isDragging || e.button !== 0) return;
+      isDragging = false;
+
+      if (dragPixelList.length === 0) return;
+
+      const uuid = localStorage.getItem('bitbrush_uuid');
+      const pixelsBatch = dragPixelList.slice();  // copy for async
+      dragPixels = new Set();
+      dragPixelList = [];
+
+      try {
+        const resp = await fetch('/api/pixels', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            pixels: pixelsBatch,
+            paletteIndex: selectedPaletteIndex,
+            authorUuid: uuid
+          })
+        });
+
+        if (!resp.ok) {
+          if (resp.status === 429) {
+            flashBalanceRed();
+          }
+          console.error('Batch pixel placement failed:', resp.status);
+        } else {
+          // Refresh stats immediately after successful pixel placement
+          fetchStats();
+        }
+      } catch (err) {
+        console.error('Batch pixel placement network error:', err);
+      }
+    });
+
+    // ── Export PNG ─────────────────────────────────────────────────────────────
+    document.getElementById('export-btn').addEventListener('click', () => {
+      const a = document.createElement('a');
+      a.href = '/api/canvas/png';
+      a.download = 'bitbrush-canvas.png';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    });
+
+    // ── Stats ───────────────────────────────────────────────────────────────
+    function formatNumber(n) {
+      return n.toLocaleString();
+    }
+
+    async function fetchStats() {
+      const statsEl = document.getElementById('stats');
+      try {
+        const resp = await fetch('/api/stats');
+        if (!resp.ok) {
+          statsEl.innerHTML = '<span style="color:#666666;">Stats unavailable</span>';
+          return;
+        }
+        const data = await resp.json();
+
+        if (data.totalPixels === 0) {
+          statsEl.innerHTML = '<span style="color:#888888;">No pixels placed yet</span>';
+          return;
+        }
+
+        let html = '<span style="color:#cccccc; font-size:14px;">'
+          + formatNumber(data.totalPixels) + ' pixels placed</span>';
+
+        const top5 = data.colorDistribution.slice(0, 5);
+        html += '<div style="display:flex; flex-wrap:wrap; gap:4px;">';
+        for (const entry of top5) {
+          const hex = PALETTE[entry.paletteIndex] || '#000000';
+          html += '<span style="display:inline-flex; align-items:center; gap:3px;">'
+            + '<span style="display:inline-block; width:10px; height:10px; background:'
+            + hex + '; border-radius:2px; flex-shrink:0;"></span>'
+            + '<span style="font-size:13px; color:#888888;">'
+            + formatNumber(entry.pixelCount) + '</span></span>';
+        }
+        html += '</div>';
+
+        statsEl.innerHTML = html;
+      } catch (err) {
+        statsEl.innerHTML = '<span style="color:#666666;">Stats unavailable</span>';
+      }
+    }
+
+    // ── Mobile drawer ───────────────────────────────────────────────────────
+    const drawerEl = document.getElementById('drawer');
+    const drawerStrip = document.getElementById('drawer-strip');
+    const drawerContent = document.getElementById('drawer-content');
+
+    if (drawerStrip) {
+      drawerStrip.addEventListener('click', () => {
+        const isExpanded = drawerEl.classList.toggle('expanded');
+        drawerStrip.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+      });
+
+      drawerStrip.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          drawerStrip.click();
+        }
+      });
+
+      // Close drawer on click outside (on canvas area)
+      document.addEventListener('click', (e) => {
+        if (drawerEl.classList.contains('expanded') && !drawerEl.contains(e.target)) {
+          drawerEl.classList.remove('expanded');
+          drawerStrip.setAttribute('aria-expanded', 'false');
+        }
+      });
+    }
+
+    function updateDrawerStrip() {
+      const balanceEl = document.getElementById('drawer-balance');
+      const swatchEl = document.getElementById('drawer-swatch');
+      if (balanceEl) {
+        balanceEl.textContent = localBalance + '/' + localMaxBalance;
+      }
+      if (swatchEl) {
+        if (selectedPaletteIndex === 0) {
+          swatchEl.style.backgroundColor = '#1a1a1a';
+          swatchEl.style.borderColor = '#ff4444';
+          swatchEl.classList.add('eraser-swatch');
+        } else {
+          swatchEl.style.backgroundColor = PALETTE[selectedPaletteIndex];
+          swatchEl.style.borderColor = '';
+          swatchEl.classList.remove('eraser-swatch');
+        }
+      }
+      // Sync recent colors in drawer strip
+      const recentEl = document.getElementById('drawer-recent-colors');
+      if (recentEl) {
+        recentEl.innerHTML = '';
+        const show = recentColors.slice(0, 4); // show up to 4 recent colors
+        show.forEach(hex => {
+          const dot = document.createElement('span');
+          dot.className = 'drawer-recent-dot';
+          dot.style.backgroundColor = hex;
+          dot.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const origIdx = PALETTE.indexOf(hex);
+            if (origIdx !== -1) selectColor(origIdx, hex);
+          });
+          recentEl.appendChild(dot);
+        });
+      }
+      // Drawer progress bar is synced by setProgressBars() in updateBankDisplay
+    }
+
+    // ── First-visit hint overlay ─────────────────────────────────────────────
+    function showHintOverlay() {
+      if (localStorage.getItem('bitbrush_hints_seen') === 'true') return;
+
+      const hint = document.createElement('div');
+      hint.id = 'hint-overlay';
+      hint.setAttribute('role', 'status');
+      hint.setAttribute('aria-live', 'polite');
+      const isMobile = window.matchMedia('(max-width: 767px)').matches || 'ontouchstart' in window;
+      if (isMobile) {
+        hint.textContent = 'Pinch to zoom \u00B7 Two-finger drag to pan \u00B7 Tap to draw';
+      } else {
+        hint.textContent = 'Scroll to zoom \u00B7 Right-drag to pan \u00B7 Left click (or click and drag) to draw';
+      }
+      container.appendChild(hint);
+
+      let dismissed = false;
+      function dismiss() {
+        if (dismissed) return;
+        dismissed = true;
+        hint.style.opacity = '0';
+        setTimeout(() => { if (hint.parentNode) hint.parentNode.removeChild(hint); }, 500);
+        localStorage.setItem('bitbrush_hints_seen', 'true');
+      }
+
+      container.addEventListener('wheel', dismiss, { once: true });
+      container.addEventListener('mousedown', dismiss, { once: true });
+      container.addEventListener('touchstart', dismiss, { once: true });
+      container.addEventListener('keydown', dismiss, { once: true });
+      setTimeout(dismiss, 10000);
+    }
+
+    // ── Modal focus trapping ─────────────────────────────────────────────────
+    const modalOverlay = document.getElementById('modal-overlay');
+    modalOverlay.addEventListener('keydown', (e) => {
+      if (e.key === 'Tab') {
+        const focusable = modalOverlay.querySelectorAll('input, button, [tabindex]:not([tabindex="-1"])');
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    });
+
+    // ── Bootstrap ─────────────────────────────────────────────────────────────
+    document.addEventListener('DOMContentLoaded', async () => {
+      updateContainerSize();
+      centerCanvas();
+      applyTransform();
+      renderRecentColors();
+      await initIdentity();
+      await loadCanvas();
+      applyTransform();  // re-draw grid over loaded pixels
+      connectWebSocket();
+      fetchStats();
+      setInterval(fetchStats, 30000);
+
+      // Populate mobile drawer content
+      if (drawerContent && window.matchMedia('(max-width: 767px)').matches) {
+        const drawerPalette = document.createElement('div');
+        drawerPalette.id = 'drawer-palette';
+        drawerPalette.style.cssText = 'display:grid; grid-template-columns:repeat(12,1fr); gap:2px;';
+
+        sortedPalette.forEach((item) => {
+          const swatch = document.createElement('div');
+          swatch.className = 'swatch';
+          if (item.originalIndex === 0) {
+            swatch.classList.add('eraser-swatch');
+            swatch.title = 'Eraser';
+          } else {
+            swatch.style.backgroundColor = item.hex;
+            swatch.title = item.hex;
+          }
+          swatch.addEventListener('click', () => {
+            selectColor(item.originalIndex, item.hex);
+            updateDrawerStrip();
+          });
+          drawerPalette.appendChild(swatch);
+        });
+
+        drawerContent.appendChild(drawerPalette);
+      }
+
+      updateDrawerStrip();
+    });
+  </script>
+</body>
+</html>
