@@ -1,0 +1,26 @@
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: bitbrush
+      POSTGRES_USER: bitbrush
+      POSTGRES_PASSWORD: bitbrush
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  bitbrush:
+    build: .
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      DATABASE_URL: jdbc:postgresql://postgres:5432/bitbrush
+      DATABASE_USERNAME: bitbrush
+      DATABASE_PASSWORD: bitbrush
+
+volumes:
+  pgdata:
