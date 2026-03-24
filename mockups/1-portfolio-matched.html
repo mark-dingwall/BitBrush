@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Major+Mono+Display&family=VT323&display=swap" rel="stylesheet">
+  <title>BitBrush - Portfolio Matched</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #000;
+      color: #ccc;
+      font-family: "VT323", monospace;
+      font-size: 20px;
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 24px;
+    }
+
+    #app {
+      display: flex;
+      gap: 16px;
+      align-items: flex-start;
+    }
+
+    /* --- Canvas area --- */
+    #canvas-area {
+      position: relative;
+      width: 500px;
+      height: 500px;
+      flex-shrink: 0;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    #canvas-area canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      image-rendering: pixelated;
+      cursor: crosshair;
+    }
+
+    /* --- Sidebar: frosted glass --- */
+    #sidebar {
+      width: 200px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      background: rgba(0, 0, 0, 0.5);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+      padding: 16px;
+      flex-shrink: 0;
+    }
+
+    /* --- Title --- */
+    #title {
+      font-family: "Major Mono Display", monospace;
+      font-size: 22px;
+      color: #fff;
+      letter-spacing: -0.5px;
+    }
+
+    /* --- Status line --- */
+    .status-line {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 18px;
+      color: #888;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #0c6;
+      flex-shrink: 0;
+      box-shadow: 0 0 6px #0c6;
+    }
+
+    /* --- Bank --- */
+    .bank {
+      font-size: 18px;
+      color: #aaa;
+    }
+
+    .bank-balance {
+      color: #0cc;
+      font-size: 22px;
+    }
+
+    /* --- Coords --- */
+    .coords {
+      font-size: 16px;
+      color: #666;
+    }
+
+    /* --- Dividers --- */
+    .divider {
+      height: 1px;
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    /* --- Section labels --- */
+    .label {
+      font-size: 14px;
+      color: #666;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+    }
+
+    /* --- Palette --- */
+    #palette {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 2px;
+    }
+
+    .swatch {
+      aspect-ratio: 1;
+      cursor: pointer;
+      border: 2px solid transparent;
+      border-radius: 3px;
+      transition: border-color 0.15s, transform 0.1s;
+    }
+
+    .swatch:hover {
+      border-color: rgba(255, 255, 255, 0.4);
+      transform: scale(1.15);
+      z-index: 1;
+    }
+
+    .swatch.active {
+      border-color: #fff;
+      box-shadow: 0 0 8px rgba(255, 255, 255, 0.3);
+    }
+
+    /* --- Export button --- */
+    .btn {
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 6px;
+      color: #ccc;
+      cursor: pointer;
+      font-family: "VT323", monospace;
+      font-size: 18px;
+      padding: 8px 12px;
+      text-align: center;
+      transition: background 0.2s, border-color 0.2s;
+    }
+
+    .btn:hover {
+      background: rgba(255, 255, 255, 0.1);
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    /* --- Stats --- */
+    .stats {
+      font-size: 18px;
+      color: #aaa;
+    }
+
+    .stat-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 3px;
+    }
+
+    .stat-swatch {
+      width: 12px;
+      height: 12px;
+      border-radius: 2px;
+      flex-shrink: 0;
+    }
+
+    .stat-count {
+      font-size: 16px;
+      color: #888;
+    }
+
+    /* --- Variant badge --- */
+    .variant-badge {
+      position: fixed;
+      top: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0, 204, 204, 0.15);
+      border: 1px solid rgba(0, 204, 204, 0.3);
+      border-radius: 20px;
+      padding: 6px 20px;
+      font-family: "VT323", monospace;
+      font-size: 18px;
+      color: #0cc;
+      z-index: 100;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="variant-badge">1/3 &mdash; Portfolio Matched</div>
+
+  <div id="app">
+    <div id="canvas-area">
+      <canvas id="canvas" width="500" height="500"></canvas>
+    </div>
+    <div id="sidebar">
+      <div id="title">bitBrush</div>
+
+      <div class="status-line">
+        <div class="status-dot"></div>
+        <span>3 online</span>
+      </div>
+
+      <div class="bank">
+        <span class="bank-balance">12/25</span> pixels &mdash; next in 2s
+      </div>
+
+      <div class="coords">x: 142, y: 87 (4x)</div>
+
+      <div class="divider"></div>
+
+      <div class="label">Palette</div>
+      <div id="palette"></div>
+
+      <div class="divider"></div>
+
+      <button class="btn">Export PNG</button>
+
+      <div class="divider"></div>
+
+      <div class="label">Stats</div>
+      <div class="stats">
+        <div style="margin-bottom: 4px;">1,247 pixels placed</div>
+        <div class="stat-row"><div class="stat-swatch" style="background:#FF0000;"></div><span class="stat-count">342</span></div>
+        <div class="stat-row"><div class="stat-swatch" style="background:#0066FF;"></div><span class="stat-count">287</span></div>
+        <div class="stat-row"><div class="stat-swatch" style="background:#00CC00;"></div><span class="stat-count">198</span></div>
+        <div class="stat-row"><div class="stat-swatch" style="background:#FFCC00;"></div><span class="stat-count">156</span></div>
+        <div class="stat-row"><div class="stat-swatch" style="background:#FF00FF;"></div><span class="stat-count">112</span></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Draw a fake pixel art canvas
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, 500, 500);
+
+    // Seed random for consistency
+    let seed = 42;
+    function rand() { seed = (seed * 16807 + 0) % 2147483647; return seed / 2147483647; }
+
+    const colors = ['#FF0000','#0066FF','#00CC00','#FFCC00','#FF00FF','#00CCCC','#FF6600','#9933FF','#FFFFFF','#666666'];
+    for (let i = 0; i < 1200; i++) {
+      const x = Math.floor(rand() * 250);
+      const y = Math.floor(rand() * 250);
+      ctx.fillStyle = colors[Math.floor(rand() * colors.length)];
+      ctx.fillRect(x * 2, y * 2, 2, 2);
+    }
+
+    // Draw grid (like zoomed in view)
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+    ctx.lineWidth = 0.5;
+    for (let x = 0; x <= 500; x += 2) {
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, 500); ctx.stroke();
+    }
+    for (let y = 0; y <= 500; y += 2) {
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(500, y); ctx.stroke();
+    }
+
+    // Palette
+    const WEBSAFE = [0x00, 0x33, 0x66, 0x99, 0xCC, 0xFF];
+    const paletteEl = document.getElementById('palette');
+    let activeIdx = 30; // start on a bright color
+    let activeSwatch = null;
+
+    // Show a curated subset for the mockup (36 colors, 6x6)
+    const subset = [];
+    for (let r = 0; r < 6; r++) {
+      for (let g = 0; g < 6; g++) {
+        subset.push('#' + WEBSAFE[r].toString(16).padStart(2,'0') + WEBSAFE[g].toString(16).padStart(2,'0') + 'FF');
+      }
+    }
+
+    subset.forEach((hex, i) => {
+      const s = document.createElement('div');
+      s.className = 'swatch' + (i === 5 ? ' active' : '');
+      s.style.backgroundColor = hex;
+      s.title = hex;
+      if (i === 5) activeSwatch = s;
+      s.onclick = () => {
+        if (activeSwatch) activeSwatch.classList.remove('active');
+        s.classList.add('active');
+        activeSwatch = s;
+      };
+      paletteEl.appendChild(s);
+    });
+  </script>
+</body>
+</html>
