@@ -1,0 +1,13 @@
+.git
+.gradle
+build
+data
+.idea
+*.iml
+*.iws
+*.ipr
+.vscode
+.planning
+mockups
+.claude
+.agents
