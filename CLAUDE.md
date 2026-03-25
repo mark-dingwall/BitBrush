@@ -43,6 +43,7 @@ The dev profile (`application-dev.properties`) uses `ddl-auto=create` — schema
 - `BankingService` uses `ConcurrentHashMap.compute()` for all mutations — thread-safe without locks
 - Points earned on a `@Scheduled` timer (every `earnRateSeconds`), only for connected users
 - Points reset on server restart (intentional design choice)
+- Insufficient balance returns **402 Payment Required** (not 429) via `InsufficientBalanceException` → `GlobalExceptionHandler`
 
 **Eraser convention:** `paletteIndex == 0` is the eraser. All repository queries filter `WHERE paletteIndex <> 0` to exclude erased pixels from canvas state, stats, and author lookups.
 
@@ -61,7 +62,7 @@ The dev profile (`application-dev.properties`) uses `ddl-auto=create` — schema
 
 ## Testing Patterns
 
-- **Unit tests**: `@Mock` + `@InjectMocks` with Mockito (e.g., `BankingServiceTest`, `PixelServiceTest`)
+- **Unit tests**: `@Mock` + `@InjectMocks` with Mockito (e.g., `BankingServiceTest`, `PixelServiceTest`, `CanvasExportServiceTest`)
 - **Controller slice tests**: `@WebMvcTest` with `@MockitoBean` for isolated HTTP testing (e.g., `*SliceTest.java`)
 - **Integration tests**: `@SpringBootTest` with `@Transactional` for full context (e.g., `CanvasControllerTest`, `PixelControllerTest`)
 - **WebSocket tests**: `WebSocketIntegrationTest` uses `StompSession` + `CompletableFuture` against a live server
