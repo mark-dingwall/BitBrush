@@ -103,7 +103,7 @@ class PixelControllerSliceTest {
     }
 
     @Test
-    void postPixels_serviceThrowsInsufficientBalance_returns429() throws Exception {
+    void postPixels_serviceThrowsInsufficientBalance_returns402() throws Exception {
         doThrow(new InsufficientBalanceException(3))
                 .when(pixelService).placePixels(any());
 
@@ -117,7 +117,13 @@ class PixelControllerSliceTest {
                                   "authorUuid": "test-uuid"
                                 }
                                 """))
-                .andExpect(status().isTooManyRequests());
+                .andExpect(status().is(402));
+    }
+
+    @Test
+    void getPixelInfo_outOfBoundsCoordinates_returns400() throws Exception {
+        mockMvc.perform(get("/api/pixels/250/250/info"))
+                .andExpect(status().isBadRequest());
     }
 
     @Test

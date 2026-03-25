@@ -169,10 +169,9 @@ class PixelControllerTest {
 
     @Test
     void getPixelInfo_returns404ForEmptyCoordinate() throws Exception {
-        // Given: no pixel at (999, 999) — coordinates within canvas bounds not important
-        //        as this just tests the "no pixel found" path
+        // Given: no pixel at (249, 249) — valid coordinates with no pixel placed
         // When/Then
-        mockMvc.perform(get("/api/pixels/999/999/info"))
+        mockMvc.perform(get("/api/pixels/249/249/info"))
                 .andExpect(status().isNotFound());
     }
 
@@ -274,20 +273,20 @@ class PixelControllerTest {
     }
 
     @Test
-    void postPixelsReturns429WhenBalanceZero() throws Exception {
+    void postPixelsReturns402WhenBalanceZero() throws Exception {
         // Use a fresh UUID isolated to this test so balance always starts at 5,
         // regardless of what other tests may have deducted from TEST_UUID.
-        String rate429Uuid = "test-uuid-429-isolated";
-        String rate429Session = "test-session-429";
+        String rate402Uuid = "test-uuid-402-isolated";
+        String rate402Session = "test-session-402";
 
         // Register user and connect to banking
         mockMvc.perform(post("/api/users")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
-                        {"uuid": "%s", "username": "rate429tester"}
-                        """.formatted(rate429Uuid)))
+                        {"uuid": "%s", "username": "rate402tester"}
+                        """.formatted(rate402Uuid)))
                 .andExpect(status().isCreated());
-        bankingService.onUserConnect(rate429Uuid, rate429Session);
+        bankingService.onUserConnect(rate402Uuid, rate402Session);
 
         try {
             // Spend all 5 starting points
@@ -300,7 +299,7 @@ class PixelControllerTest {
                                   "paletteIndex": 0,
                                   "authorUuid": "%s"
                                 }
-                                """.formatted(i, rate429Uuid)))
+                                """.formatted(i, rate402Uuid)))
                         .andExpect(status().isOk());
             }
             // 6th request — balance is 0
@@ -312,15 +311,21 @@ class PixelControllerTest {
                               "paletteIndex": 0,
                               "authorUuid": "%s"
                             }
-                            """.formatted(rate429Uuid)))
-                    .andExpect(status().isTooManyRequests())
+                            """.formatted(rate402Uuid)))
+                    .andExpect(status().is(402))
                     .andExpect(result -> {
                         String body = result.getResponse().getContentAsString();
                         assertTrue(body.contains("retryAfterSeconds"),
                             "Response body must contain retryAfterSeconds but was: " + body);
                     });
         } finally {
-            bankingService.onUserDisconnect(rate429Uuid);
+            bankingService.onUserDisconnect(rate402Uuid);
         }
+    }
+
+    @Test
+    void getPixelInfoReturns400ForNegativeCoordinates() throws Exception {
+        mockMvc.perform(get("/api/pixels/-1/-1/info"))
+                .andExpect(status().isBadRequest());
     }
 }
