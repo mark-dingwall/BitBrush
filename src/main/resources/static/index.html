@@ -401,6 +401,44 @@
       border-color: rgba(255, 255, 255, 0.2);
     }
 
+    #export-btn:disabled {
+      opacity: 0.5;
+      cursor: wait;
+      pointer-events: none;
+    }
+
+    #canvas-error {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(0, 0, 0, 0.85);
+      border-radius: 8px;
+      padding: 24px;
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 16px;
+      color: #ff6666;
+      text-align: center;
+      z-index: 10;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      align-items: center;
+    }
+    #canvas-error button {
+      background: rgba(255, 255, 255, 0.1);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 4px;
+      color: #cccccc;
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 16px;
+      padding: 6px 16px;
+      cursor: pointer;
+    }
+    #canvas-error button:hover {
+      background: rgba(255, 255, 255, 0.15);
+    }
+
     /* Focus outline (global a11y) */
     *:focus-visible {
       outline: 2px solid #00cccc;
@@ -439,7 +477,7 @@
 
       #canvas-container {
         width: 100%;
-        max-height: calc(100vh - 64px);
+        max-height: calc(100vh - 64px - 48px);
       }
 
       #sidebar {
@@ -763,6 +801,14 @@
     const pixelInfoCache = new Map();   // authorUuid -> { username, placedAt, authorPixels: [{x,y}] }
     const coordToAuthor = new Map();    // "x,y" string -> authorUuid
     let currentHighlightAuthor = null;  // authorUuid of currently highlighted author
+    const PIXEL_INFO_CACHE_MAX = 1000;
+    const COORD_AUTHOR_CACHE_MAX = 5000;
+
+    function evictOldest(map, maxSize) {
+      while (map.size > maxSize) {
+        map.delete(map.keys().next().value);
+      }
+    }
 
     // ── Tooltip display functions ───────────────────────────────────────────
     function positionTooltip(tooltip, screenX, screenY) {
@@ -887,9 +933,11 @@
         const info = await resp.json();
 
         pixelInfoCache.set(info.authorUuid, info);
+        evictOldest(pixelInfoCache, PIXEL_INFO_CACHE_MAX);
         for (const p of info.authorPixels) {
           coordToAuthor.set(p.x + ',' + p.y, info.authorUuid);
         }
+        evictOldest(coordToAuthor, COORD_AUTHOR_CACHE_MAX);
 
         if (lastHoverX === x && lastHoverY === y) {
           showTooltip(info, screenX, screenY);
@@ -1212,15 +1260,47 @@
       return imageData.data[idx] === 0 && imageData.data[idx + 1] === 0 && imageData.data[idx + 2] === 0;
     }
 
+    function isPixelSameColor(x, y, paletteIndex) {
+      const idx = ((y * SCALE) * (WIDTH * SCALE) + (x * SCALE)) * 4;
+      const [r, g, b] = hexToRgb(PALETTE[paletteIndex]);
+      return imageData.data[idx] === r && imageData.data[idx + 1] === g && imageData.data[idx + 2] === b;
+    }
+
     // ── Cursor coordinates ────────────────────────────────────────────────────
     const coordsEl = document.getElementById('coords');
 
+    // ── Error feedback ──────────────────────────────────────────────────────
+    function showCanvasError(message) {
+      const existing = document.getElementById('canvas-error');
+      if (existing) existing.remove();
+      const overlay = document.createElement('div');
+      overlay.id = 'canvas-error';
+      overlay.innerHTML = '<span>' + message + '</span>';
+      const btn = document.createElement('button');
+      btn.textContent = 'Retry';
+      btn.addEventListener('click', () => loadCanvas());
+      overlay.appendChild(btn);
+      container.appendChild(overlay);
+    }
+
+    function showErrorFlash(message) {
+      const flash = document.createElement('div');
+      flash.style.cssText = 'position:fixed;top:16px;left:50%;transform:translateX(-50%);background:#331111;border:1px solid #ff4444;border-radius:6px;padding:8px 16px;font-family:"Share Tech Mono",monospace;font-size:14px;color:#ff6666;z-index:200;pointer-events:none;';
+      flash.textContent = message;
+      document.body.appendChild(flash);
+      setTimeout(() => { flash.style.opacity = '0'; flash.style.transition = 'opacity 300ms'; }, 2000);
+      setTimeout(() => flash.remove(), 2500);
+    }
+
     // ── Canvas load ───────────────────────────────────────────────────────────
     async function loadCanvas() {
+      const existing = document.getElementById('canvas-error');
+      if (existing) existing.remove();
       try {
         const resp = await fetch('/api/canvas');
         if (!resp.ok) {
           console.error('Failed to load canvas:', resp.status);
+          showCanvasError('Failed to load canvas (HTTP ' + resp.status + ')');
           return;
         }
         const pixels = await resp.json();
@@ -1230,6 +1310,7 @@
         ctx.putImageData(imageData, 0, 0);
       } catch (err) {
         console.error('Canvas load error:', err);
+        showCanvasError('Network error loading canvas');
       }
     }
 
@@ -1420,6 +1501,7 @@
             }
             if (newAuthor) {
               coordToAuthor.set(coordKey, newAuthor);
+              evictOldest(coordToAuthor, COORD_AUTHOR_CACHE_MAX);
             }
           }
         });
@@ -1692,6 +1774,7 @@
           return;
         }
         if (selectedPaletteIndex === 0 && isPixelEmpty(kbCursorX, kbCursorY)) return; // eraser on empty cell: no-op
+        if (selectedPaletteIndex !== 0 && isPixelSameColor(kbCursorX, kbCursorY, selectedPaletteIndex)) return; // same color: no-op
 
         // Optimistic local paint
         paintPixelInBuffer(kbCursorX, kbCursorY, PALETTE[selectedPaletteIndex]);
@@ -1715,8 +1798,13 @@
           })
         }).then(resp => {
           if (resp.ok) fetchStats();
-          else if (resp.status === 429) flashBalanceRed();
-        }).catch(err => console.error('Keyboard pixel placement error:', err));
+          else if (resp.status === 402) flashBalanceRed();
+          else { showErrorFlash('Pixel placement failed'); loadCanvas(); }
+        }).catch(err => {
+          showErrorFlash('Network error placing pixel');
+          loadCanvas();
+          console.error('Keyboard pixel placement error:', err);
+        });
 
         // Redraw cursor after pixel change
         drawGrid();
@@ -1755,6 +1843,7 @@
       if (dragPixels.has(key)) return;  // deduplicate
       if (localBalance <= 0) return;     // stop placing silently when balance hits 0
       if (selectedPaletteIndex === 0 && isPixelEmpty(x, y)) return; // eraser on empty cell: no-op
+      if (selectedPaletteIndex !== 0 && isPixelSameColor(x, y, selectedPaletteIndex)) return; // same color: no-op
 
       dragPixels.add(key);
       dragPixelList.push({ x, y });
@@ -1840,27 +1929,49 @@
         });
 
         if (!resp.ok) {
-          if (resp.status === 429) {
+          if (resp.status === 402) {
             flashBalanceRed();
           }
+          showErrorFlash('Pixel placement failed');
+          loadCanvas();
           console.error('Batch pixel placement failed:', resp.status);
         } else {
           // Refresh stats immediately after successful pixel placement
           fetchStats();
         }
       } catch (err) {
+        showErrorFlash('Network error placing pixels');
+        loadCanvas();
         console.error('Batch pixel placement network error:', err);
       }
     });
 
     // ── Export PNG ─────────────────────────────────────────────────────────────
-    document.getElementById('export-btn').addEventListener('click', () => {
-      const a = document.createElement('a');
-      a.href = '/api/canvas/png';
-      a.download = 'bitbrush-canvas.png';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+    document.getElementById('export-btn').addEventListener('click', async () => {
+      const btn = document.getElementById('export-btn');
+      if (btn.disabled) return;
+      btn.disabled = true;
+      const originalText = btn.textContent;
+      btn.textContent = 'Exporting...';
+      try {
+        const resp = await fetch('/api/canvas/png');
+        if (!resp.ok) throw new Error('Export failed: ' + resp.status);
+        const blob = await resp.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'bitbrush-canvas.png';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        console.error('Export error:', err);
+        showErrorFlash('Export failed');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
     });
 
     // ── Stats ───────────────────────────────────────────────────────────────
