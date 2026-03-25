@@ -50,11 +50,11 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     public ResponseEntity<ProblemDetail> handleInsufficientBalance(InsufficientBalanceException ex) {
         log.debug("InsufficientBalanceException: retryAfterSeconds={}", ex.getRetryAfterSeconds());
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(
-            HttpStatus.TOO_MANY_REQUESTS, "Insufficient placement balance");
-        problem.setTitle("Rate Limited");
+            HttpStatus.PAYMENT_REQUIRED, "Insufficient placement balance");
+        problem.setTitle("Insufficient Balance");
         problem.setProperty("retryAfterSeconds", ex.getRetryAfterSeconds());
         problem.setProperty("balance", 0);
-        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+        return ResponseEntity.status(HttpStatus.PAYMENT_REQUIRED)
             .header("Retry-After", String.valueOf(ex.getRetryAfterSeconds()))
             .body(problem);
     }

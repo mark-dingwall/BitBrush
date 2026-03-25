@@ -74,7 +74,7 @@ public class PixelService {
      * Uses atomic multi-point deduction: deducts up to N points for N pixels.
      * If balance is insufficient for all pixels, only the first {@code deducted}
      * pixels are placed (partial placement for drag batches). If balance is 0,
-     * throws InsufficientBalanceException (429 via GlobalExceptionHandler).
+     * throws InsufficientBalanceException (402 via GlobalExceptionHandler).
      */
     public void placePixels(PixelPlacementRequest request) {
         if (request.paletteIndex() >= colorPalette.size()) {
@@ -111,7 +111,7 @@ public class PixelService {
                 pixels.size(), request.authorUuid(), request.pixels().size(), deducted);
 
         boolean isEraser = request.paletteIndex() == 0;
-        String hexColor = isEraser ? "#000000" : colorPalette.get(request.paletteIndex());
+        String hexColor = colorPalette.get(request.paletteIndex());
         for (PixelCoordinate coord : pixelsToPlace) {
             messagingTemplate.convertAndSend("/topic/pixels",
                     new PixelBroadcast(coord.x(), coord.y(), hexColor, request.authorUuid(), isEraser));

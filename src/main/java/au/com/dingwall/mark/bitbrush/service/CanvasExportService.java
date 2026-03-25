@@ -64,6 +64,16 @@ public class CanvasExportService {
                 pixels.size(), width, height, imgWidth, imgHeight);
 
         for (Pixel pixel : pixels) {
+            if (pixel.getPaletteIndex() < 0 || pixel.getPaletteIndex() >= colorPalette.size()) {
+                log.warn("Skipping pixel at ({}, {}) with invalid paletteIndex {}",
+                        pixel.getX(), pixel.getY(), pixel.getPaletteIndex());
+                continue;
+            }
+            if (pixel.getX() < 0 || pixel.getX() >= width || pixel.getY() < 0 || pixel.getY() >= height) {
+                log.warn("Skipping pixel at ({}, {}) outside canvas bounds {}x{}",
+                        pixel.getX(), pixel.getY(), width, height);
+                continue;
+            }
             int rgb = hexToRgbInt(colorPalette.get(pixel.getPaletteIndex()));
             int px = pixel.getX() * SCALE;
             int py = pixel.getY() * SCALE;
