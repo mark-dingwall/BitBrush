@@ -341,6 +341,29 @@
       ctx.translate(-viewPanX * SCALE, -viewPanY * SCALE);
       ctx.drawImage(bufferCanvas, 0, 0);
       ctx.restore();
+
+      // Draw grid lines at high zoom (4x+) in screen space for crisp 1px lines
+      if (viewZoom >= 4) {
+        var cw = canvas.width;
+        var ch = canvas.height;
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.18)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        for (var gx = 0; gx <= WIDTH; gx++) {
+          var sx = Math.round((gx * SCALE - viewPanX * SCALE) * viewZoom + cw / 2) + 0.5;
+          if (sx < 0 || sx > cw) continue;
+          ctx.moveTo(sx, 0);
+          ctx.lineTo(sx, ch);
+        }
+        for (var gy = 0; gy <= HEIGHT; gy++) {
+          var sy = Math.round((gy * SCALE - viewPanY * SCALE) * viewZoom + ch / 2) + 0.5;
+          if (sy < 0 || sy > ch) continue;
+          ctx.moveTo(0, sy);
+          ctx.lineTo(cw, sy);
+        }
+        ctx.stroke();
+      }
+
       // Update zoom badge
       if (viewZoom > 1.05) {
         zoomBadge.textContent = viewZoom.toFixed(1) + 'x';
