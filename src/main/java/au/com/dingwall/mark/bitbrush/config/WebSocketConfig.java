@@ -38,7 +38,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
         registry.addEndpoint("/ws")
-               .setAllowedOriginPatterns("https://*.github.io", "https://*.fly.dev", "http://localhost:[*]")
+               .setAllowedOriginPatterns("https://*.github.io", "https://*.fly.dev", "https://mark.dingwall.com.au", "http://localhost:[*]")
                .withSockJS();
         log.info("STOMP endpoint registered at /ws (SockJS enabled)");
     }

@@ -10,7 +10,7 @@ public class CorsConfig implements WebMvcConfigurer {
     @Override
     public void addCorsMappings(CorsRegistry registry) {
         registry.addMapping("/api/**")
-                .allowedOriginPatterns("https://*.github.io", "https://*.fly.dev", "http://localhost:[*]")
+                .allowedOriginPatterns("https://*.github.io", "https://*.fly.dev", "https://mark.dingwall.com.au", "http://localhost:[*]")
                 .allowedMethods("GET", "POST")
                 .allowedHeaders("Content-Type", "X-Turnstile-Token")
                 .allowCredentials(false);
