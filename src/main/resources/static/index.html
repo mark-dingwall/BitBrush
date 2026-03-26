@@ -41,6 +41,7 @@
       overflow: hidden;
       position: relative;
       background: #000000;
+      touch-action: none;
     }
 
     #canvas {
@@ -51,6 +52,7 @@
       top: 0;
       left: 0;
       transform-origin: 0 0;
+      touch-action: none;
     }
 
     #overlay {
@@ -636,7 +638,41 @@
     </div>
   </div>
 
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
+  <div id="turnstile-container" style="display:none;"></div>
   <script>
+    // ── Turnstile (Cloudflare bot protection) ─────────────────────────────────
+    let turnstileToken = null;
+    let turnstileWidgetId = null;
+    const TURNSTILE_SITE_KEY = '0x4AAAAAACwHh6lB9uQESFQA';
+
+    function initTurnstile() {
+      if (typeof turnstile !== 'undefined') {
+        turnstileWidgetId = turnstile.render('#turnstile-container', {
+          sitekey: TURNSTILE_SITE_KEY,
+          callback: (token) => { turnstileToken = token; },
+          'expired-callback': () => { turnstileToken = null; },
+          'error-callback': () => { turnstileToken = null; },
+          size: 'invisible'
+        });
+      } else {
+        setTimeout(initTurnstile, 200);
+      }
+    }
+    initTurnstile();
+
+    function refreshTurnstile() {
+      if (typeof turnstile !== 'undefined' && turnstileWidgetId != null) {
+        turnstile.reset(turnstileWidgetId);
+      }
+    }
+
+    function turnstileHeaders() {
+      const h = { 'Content-Type': 'application/json' };
+      if (turnstileToken) h['X-Turnstile-Token'] = turnstileToken;
+      return h;
+    }
+
     // ── Constants ──────────────────────────────────────────────────────────────
     const SCALE  = 2;
     const WIDTH  = 250;
@@ -1591,7 +1627,7 @@
         try {
           const resp = await fetch('/api/users', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: turnstileHeaders(),
             body: JSON.stringify({ uuid, username })
           });
 
@@ -1600,6 +1636,9 @@
             overlay.style.display = 'none';
             // Show hint overlay for first-time users
             setTimeout(showHintOverlay, 300);
+          } else if (resp.status === 403) {
+            refreshTurnstile();
+            errorEl.textContent = 'Verification failed — please try again';
           } else {
             let msg = 'Registration failed';
             try {
@@ -1623,11 +1662,12 @@
       } else {
         // Re-register silently — DB may have been reset (ddl-auto=create)
         try {
-          await fetch('/api/users', {
+          const resp = await fetch('/api/users', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: turnstileHeaders(),
             body: JSON.stringify({ uuid, username })
           });
+          if (resp.status === 403) refreshTurnstile();
         } catch (_) { /* best effort */ }
         // Show hints if returning user hasn't seen them
         showHintOverlay();
@@ -1790,7 +1830,7 @@
         // Send placement to server
         fetch('/api/pixels', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: turnstileHeaders(),
           body: JSON.stringify({
             pixels: [{ x: kbCursorX, y: kbCursorY }],
             paletteIndex: selectedPaletteIndex,
@@ -1799,6 +1839,7 @@
         }).then(resp => {
           if (resp.ok) fetchStats();
           else if (resp.status === 402) flashBalanceRed();
+          else if (resp.status === 403) { refreshTurnstile(); showErrorFlash('Verification failed — retrying'); }
           else { showErrorFlash('Pixel placement failed'); loadCanvas(); }
         }).catch(err => {
           showErrorFlash('Network error placing pixel');
@@ -1837,6 +1878,7 @@
     let dragPixels = new Set();     // "x,y" strings for deduplication
     let dragPixelList = [];         // [{x, y}] in order (for batch POST)
     let lastDragX = -1, lastDragY = -1;  // last logical pixel during drag
+    let touchState = 'IDLE';  // touch gesture state machine (declared early for mousedown guard)
 
     function placePixelDuringDrag(x, y) {
       const key = x + ',' + y;
@@ -1862,6 +1904,7 @@
 
     // ── Pixel placement (mousedown starts drag or single-click) ─────────────
     container.addEventListener('mousedown', (e) => {
+      if (touchState !== 'IDLE') return;  // ignore synthetic mouse events during touch
       if (e.button === 2) return;  // right-click pan handled above
       if (e.button !== 0) return;  // only left-click
       if (isPanning) return;       // don't place while panning
@@ -1905,9 +1948,8 @@
       }
     });
 
-    // ── Drag mouseup (sends batch POST) ──────────────────────────────────────
-    window.addEventListener('mouseup', async (e) => {
-      if (!isDragging || e.button !== 0) return;
+    // ── Finalize drag batch (shared by mouse and touch) ────────────────────
+    async function finalizeDragBatch() {
       isDragging = false;
 
       if (dragPixelList.length === 0) return;
@@ -1920,7 +1962,7 @@
       try {
         const resp = await fetch('/api/pixels', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: turnstileHeaders(),
           body: JSON.stringify({
             pixels: pixelsBatch,
             paletteIndex: selectedPaletteIndex,
@@ -1931,12 +1973,13 @@
         if (!resp.ok) {
           if (resp.status === 402) {
             flashBalanceRed();
+          } else if (resp.status === 403) {
+            refreshTurnstile();
           }
           showErrorFlash('Pixel placement failed');
           loadCanvas();
           console.error('Batch pixel placement failed:', resp.status);
         } else {
-          // Refresh stats immediately after successful pixel placement
           fetchStats();
         }
       } catch (err) {
@@ -1944,7 +1987,245 @@
         loadCanvas();
         console.error('Batch pixel placement network error:', err);
       }
+    }
+
+    // ── Drag mouseup ────────────────────────────────────────────────────────
+    window.addEventListener('mouseup', (e) => {
+      if (!isDragging || e.button !== 0) return;
+      finalizeDragBatch();
     });
+
+    // ── Touch gesture support ────────────────────────────────────────────────
+    // State machine: IDLE → WAITING → DRAWING or PINCH_PAN → IDLE
+    // WAITING: first finger down, 80ms window for second finger to arrive
+    // DRAWING: single-finger tap or drag (places pixels)
+    // PINCH_PAN: two-finger gesture (zoom + pan simultaneously)
+
+    const TOUCH_WAIT_MS = 80;
+    const TOUCH_MOVE_COMMIT_PX = 4;
+
+    let touchWaitTimer = null;
+    let touchStartSingle = null;
+    let touchDrawId = null;
+    let touchLastX = -1, touchLastY = -1;
+    let touchPinchStartDist = 0;
+    let touchPinchStartZoomIdx = 0;
+    let touchPanStartMidX = 0, touchPanStartMidY = 0;
+    let touchPanStartPanX = 0, touchPanStartPanY = 0;
+
+    function getTouchDistance(t1, t2) {
+      const dx = t1.clientX - t2.clientX;
+      const dy = t1.clientY - t2.clientY;
+      return Math.sqrt(dx * dx + dy * dy);
+    }
+
+    function getTouchMidpoint(t1, t2) {
+      return {
+        clientX: (t1.clientX + t2.clientX) / 2,
+        clientY: (t1.clientY + t2.clientY) / 2
+      };
+    }
+
+    function beginTouchDraw(touchInfo) {
+      const username = localStorage.getItem('bitbrush_username');
+      const uuid = localStorage.getItem('bitbrush_uuid');
+      if (!username || !uuid) return;
+
+      if (localBalance <= 0) {
+        flashBalanceRed();
+        return;
+      }
+
+      touchDrawId = touchInfo.id;
+      const { x, y } = screenToLogical({ clientX: touchInfo.startX, clientY: touchInfo.startY });
+
+      isDragging = true;
+      dragPixels = new Set();
+      dragPixelList = [];
+      lastDragX = x;
+      lastDragY = y;
+      touchLastX = x;
+      touchLastY = y;
+
+      placePixelDuringDrag(x, y);
+    }
+
+    function handleTouchDrawMove(touch) {
+      if (!isDragging) return;
+      const { x, y } = screenToLogical({ clientX: touch.clientX, clientY: touch.clientY });
+
+      if (x !== touchLastX || y !== touchLastY) {
+        const points = bresenhamLine(touchLastX, touchLastY, x, y);
+        for (let i = 1; i < points.length; i++) {
+          placePixelDuringDrag(points[i].x, points[i].y);
+        }
+        touchLastX = x;
+        touchLastY = y;
+        lastDragX = x;
+        lastDragY = y;
+      }
+    }
+
+    container.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+
+      if (e.touches.length === 1 && touchState === 'IDLE') {
+        const touch = e.touches[0];
+        touchState = 'WAITING';
+        touchStartSingle = {
+          id: touch.identifier,
+          startX: touch.clientX,
+          startY: touch.clientY
+        };
+
+        touchWaitTimer = setTimeout(() => {
+          if (touchState === 'WAITING') {
+            touchState = 'DRAWING';
+            beginTouchDraw(touchStartSingle);
+          }
+        }, TOUCH_WAIT_MS);
+
+      } else if (e.touches.length >= 2) {
+        if (touchWaitTimer) {
+          clearTimeout(touchWaitTimer);
+          touchWaitTimer = null;
+        }
+
+        if (touchState === 'DRAWING' && isDragging) {
+          if (dragPixelList.length <= 2) {
+            isDragging = false;
+            dragPixels = new Set();
+            dragPixelList = [];
+            loadCanvas();
+          } else {
+            finalizeDragBatch();
+          }
+        }
+
+        touchState = 'PINCH_PAN';
+
+        const t0 = e.touches[0];
+        const t1 = e.touches[1];
+        touchPinchStartDist = getTouchDistance(t0, t1);
+        touchPinchStartZoomIdx = zoomIndex;
+        const mid = getTouchMidpoint(t0, t1);
+        touchPanStartMidX = mid.clientX;
+        touchPanStartMidY = mid.clientY;
+        touchPanStartPanX = panX;
+        touchPanStartPanY = panY;
+      }
+    }, { passive: false });
+
+    container.addEventListener('touchmove', (e) => {
+      e.preventDefault();
+
+      if (touchState === 'WAITING' && e.touches.length === 1) {
+        const touch = e.touches[0];
+        const dx = touch.clientX - touchStartSingle.startX;
+        const dy = touch.clientY - touchStartSingle.startY;
+        if (Math.sqrt(dx * dx + dy * dy) >= TOUCH_MOVE_COMMIT_PX) {
+          clearTimeout(touchWaitTimer);
+          touchWaitTimer = null;
+          touchState = 'DRAWING';
+          beginTouchDraw(touchStartSingle);
+          handleTouchDrawMove(touch);
+        }
+        return;
+      }
+
+      if (touchState === 'DRAWING' && e.touches.length === 1) {
+        const touch = Array.from(e.touches).find(t => t.identifier === touchDrawId);
+        if (touch) handleTouchDrawMove(touch);
+        return;
+      }
+
+      if (touchState === 'PINCH_PAN' && e.touches.length >= 2) {
+        const t0 = e.touches[0];
+        const t1 = e.touches[1];
+
+        // Pan: track midpoint shift
+        const mid = getTouchMidpoint(t0, t1);
+        const dx = (mid.clientX - touchPanStartMidX) / zoom;
+        const dy = (mid.clientY - touchPanStartMidY) / zoom;
+        panX = touchPanStartPanX + dx;
+        panY = touchPanStartPanY + dy;
+        clampPan();
+
+        // Pinch zoom: map distance ratio to zoom level steps
+        const currentDist = getTouchDistance(t0, t1);
+        const ratio = currentDist / touchPinchStartDist;
+
+        let newZoomIdx = touchPinchStartZoomIdx;
+        if (ratio > 1.5) newZoomIdx = Math.min(touchPinchStartZoomIdx + 2, ZOOM_LEVELS.length - 1);
+        else if (ratio > 1.2) newZoomIdx = Math.min(touchPinchStartZoomIdx + 1, ZOOM_LEVELS.length - 1);
+        else if (ratio < 0.67) newZoomIdx = Math.max(touchPinchStartZoomIdx - 2, 0);
+        else if (ratio < 0.83) newZoomIdx = Math.max(touchPinchStartZoomIdx - 1, 0);
+
+        if (newZoomIdx !== zoomIndex) {
+          const rect = container.getBoundingClientRect();
+          const midContainerX = mid.clientX - rect.left;
+          const midContainerY = mid.clientY - rect.top;
+          const beforeX = midContainerX / zoom - panX;
+          const beforeY = midContainerY / zoom - panY;
+
+          zoomIndex = newZoomIdx;
+          zoom = ZOOM_LEVELS[zoomIndex];
+
+          panX = midContainerX / zoom - beforeX;
+          panY = midContainerY / zoom - beforeY;
+          clampPan();
+        }
+
+        applyTransform();
+        return;
+      }
+    }, { passive: false });
+
+    container.addEventListener('touchend', (e) => {
+      e.preventDefault();
+
+      if (touchState === 'WAITING') {
+        clearTimeout(touchWaitTimer);
+        touchWaitTimer = null;
+        touchState = 'IDLE';
+        // Quick tap — place a single pixel
+        beginTouchDraw(touchStartSingle);
+        finalizeDragBatch();
+        return;
+      }
+
+      if (touchState === 'DRAWING') {
+        if (e.touches.length === 0) {
+          touchState = 'IDLE';
+          finalizeDragBatch();
+        }
+        return;
+      }
+
+      if (touchState === 'PINCH_PAN') {
+        if (e.touches.length < 2) {
+          touchState = 'IDLE';
+          touchDrawId = null;
+        }
+        return;
+      }
+    }, { passive: false });
+
+    container.addEventListener('touchcancel', () => {
+      if (touchWaitTimer) {
+        clearTimeout(touchWaitTimer);
+        touchWaitTimer = null;
+      }
+      if (touchState === 'DRAWING' && isDragging) {
+        isDragging = false;
+        dragPixels = new Set();
+        dragPixelList = [];
+        loadCanvas();
+      }
+      touchState = 'IDLE';
+      isDragging = false;
+      touchDrawId = null;
+    }, { passive: false });
 
     // ── Export PNG ─────────────────────────────────────────────────────────────
     document.getElementById('export-btn').addEventListener('click', async () => {
