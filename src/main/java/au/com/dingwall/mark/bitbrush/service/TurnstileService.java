@@ -1,0 +1,63 @@
+package au.com.dingwall.mark.bitbrush.service;
+
+import au.com.dingwall.mark.bitbrush.config.TurnstileProperties;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.MediaType;
+import org.springframework.stereotype.Service;
+import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.MultiValueMap;
+import org.springframework.web.client.RestClient;
+
+@Service
+public class TurnstileService {
+
+    private static final Logger log = LoggerFactory.getLogger(TurnstileService.class);
+    private static final String VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
+
+    private final TurnstileProperties properties;
+    private final RestClient restClient;
+
+    public TurnstileService(TurnstileProperties properties, RestClient.Builder restClientBuilder) {
+        this.properties = properties;
+        this.restClient = restClientBuilder.build();
+    }
+
+    public boolean verify(String token) {
+        if (token == null || token.isBlank()) {
+            log.debug("Turnstile token is missing or blank");
+            return false;
+        }
+
+        try {
+            MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
+            form.add("secret", properties.secretKey());
+            form.add("response", token);
+
+            TurnstileResponse response = restClient.post()
+                    .uri(VERIFY_URL)
+                    .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                    .body(form)
+                    .retrieve()
+                    .body(TurnstileResponse.class);
+
+            if (response == null) {
+                log.warn("Turnstile verification returned null response");
+                return false;
+            }
+
+            log.debug("Turnstile verification result: success={}", response.success());
+            return response.success();
+        } catch (Exception e) {
+            log.error("Turnstile verification failed with exception", e);
+            return false;
+        }
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record TurnstileResponse(
+            @JsonProperty("success") boolean success
+    ) {}
+}

@@ -46,6 +46,14 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         return problem;
     }
 
+    @ExceptionHandler(TurnstileException.class)
+    public ProblemDetail handleTurnstileFailure(TurnstileException ex) {
+        log.debug("TurnstileException: {}", ex.getMessage());
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.FORBIDDEN, ex.getMessage());
+        problem.setTitle("Forbidden");
+        return problem;
+    }
+
     @ExceptionHandler(InsufficientBalanceException.class)
     public ResponseEntity<ProblemDetail> handleInsufficientBalance(InsufficientBalanceException ex) {
         log.debug("InsufficientBalanceException: retryAfterSeconds={}", ex.getRetryAfterSeconds());
