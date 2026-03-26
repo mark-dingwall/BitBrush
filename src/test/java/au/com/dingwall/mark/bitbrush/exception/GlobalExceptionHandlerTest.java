@@ -2,6 +2,7 @@ package au.com.dingwall.mark.bitbrush.exception;
 
 import au.com.dingwall.mark.bitbrush.repository.PixelRepository;
 import au.com.dingwall.mark.bitbrush.repository.UserRepository;
+import au.com.dingwall.mark.bitbrush.service.TurnstileService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -12,6 +13,10 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -38,11 +43,15 @@ class GlobalExceptionHandlerTest {
     @Autowired
     private PixelRepository pixelRepository;
 
+    @MockitoBean
+    private TurnstileService turnstileService;
+
     private static final String TEST_UUID = "test-uuid-ex-handler";
     private static final String TEST_USERNAME = "exhandler";
 
     @BeforeEach
     void registerTestUser() throws Exception {
+        when(turnstileService.verify(any())).thenReturn(true);
         mockMvc.perform(post("/api/users")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""

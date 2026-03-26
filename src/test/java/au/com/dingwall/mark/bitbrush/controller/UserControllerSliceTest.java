@@ -1,6 +1,8 @@
 package au.com.dingwall.mark.bitbrush.controller;
 
 import au.com.dingwall.mark.bitbrush.service.PixelService;
+import au.com.dingwall.mark.bitbrush.service.TurnstileService;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -12,6 +14,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -36,6 +39,14 @@ class UserControllerSliceTest {
 
     @MockitoBean
     private PixelService pixelService;
+
+    @MockitoBean
+    private TurnstileService turnstileService;
+
+    @BeforeEach
+    void allowTurnstile() {
+        when(turnstileService.verify(any())).thenReturn(true);
+    }
 
     @Test
     void postUsers_validRequest_returns201() throws Exception {

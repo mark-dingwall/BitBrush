@@ -3,6 +3,7 @@ package au.com.dingwall.mark.bitbrush.controller;
 import au.com.dingwall.mark.bitbrush.repository.PixelRepository;
 import au.com.dingwall.mark.bitbrush.repository.UserRepository;
 import au.com.dingwall.mark.bitbrush.service.BankingService;
+import au.com.dingwall.mark.bitbrush.service.TurnstileService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -13,7 +14,11 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -44,12 +49,16 @@ class PixelControllerTest {
     @Autowired
     private BankingService bankingService;
 
+    @MockitoBean
+    private TurnstileService turnstileService;
+
     private static final String TEST_UUID = "test-uuid-pixel-ctrl";
     private static final String TEST_USERNAME = "pixeltester";
     private static final String TEST_SESSION = "test-session-ctrl";
 
     @BeforeEach
     void registerTestUser() throws Exception {
+        when(turnstileService.verify(any())).thenReturn(true);
         mockMvc.perform(post("/api/users")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""

@@ -4,6 +4,8 @@ import au.com.dingwall.mark.bitbrush.dto.PixelInfoResponse;
 import au.com.dingwall.mark.bitbrush.exception.InsufficientBalanceException;
 import au.com.dingwall.mark.bitbrush.exception.UserNotFoundException;
 import au.com.dingwall.mark.bitbrush.service.PixelService;
+import au.com.dingwall.mark.bitbrush.service.TurnstileService;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -48,6 +50,14 @@ class PixelControllerSliceTest {
 
     @MockitoBean
     private PixelService pixelService;  // Laravel: Mockery::mock() + $this->app->instance()
+
+    @MockitoBean
+    private TurnstileService turnstileService;
+
+    @BeforeEach
+    void allowTurnstile() {
+        when(turnstileService.verify(any())).thenReturn(true);
+    }
 
     @Test
     void postPixels_validRequest_returns200() throws Exception {

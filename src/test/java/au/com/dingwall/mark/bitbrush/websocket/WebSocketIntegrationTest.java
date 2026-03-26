@@ -2,8 +2,10 @@ package au.com.dingwall.mark.bitbrush.websocket;
 
 import au.com.dingwall.mark.bitbrush.dto.PixelBroadcast;
 import au.com.dingwall.mark.bitbrush.service.BankingService;
+import au.com.dingwall.mark.bitbrush.service.TurnstileService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -31,7 +33,11 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
 
 /**
  * Integration tests for WebSocket/STOMP real-time collaboration (RTME-01, RTME-02).
@@ -76,6 +82,9 @@ class WebSocketIntegrationTest {
     @Autowired
     BankingService bankingService;
 
+    @MockitoBean
+    TurnstileService turnstileService;
+
     private final List<StompSession> openSessions = new ArrayList<>();
 
     /**
@@ -99,6 +108,11 @@ class WebSocketIntegrationTest {
     // WebSocket sessions are persistent (unlike HTTP request/response).
     // Must explicitly disconnect to avoid session leaks between tests.
     // Laravel: No equivalent -- HTTP tests are stateless by nature.
+    @BeforeEach
+    void allowTurnstile() {
+        when(turnstileService.verify(any())).thenReturn(true);
+    }
+
     @AfterEach
     void disconnectAll() {
         for (StompSession session : openSessions) {
