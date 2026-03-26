@@ -917,6 +917,7 @@
     canvas.addEventListener('pointercancel', function (e) {
       activePointers.delete(e.pointerId);
       if (gestureState && activePointers.size < 2) gestureState = null;
+      flushDragPixels();
       isDragging = false;
       dragPixels = new Set();
       dragPixelList = [];

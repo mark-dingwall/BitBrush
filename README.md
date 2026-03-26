@@ -4,8 +4,7 @@ A collaborative pixel art canvas where multiple users place colored pixels in re
 
 Built with Java Spring Boot as a learning project for a developer transitioning from Laravel to Spring Boot.
 
-![BitBrush Demo](mockups/demo.gif)
-<!-- Replace with actual demo GIF -->
+<!-- TODO: Add demo GIF/screenshot -->
 
 ## Features
 
@@ -16,6 +15,9 @@ Built with Java Spring Boot as a learning project for a developer transitioning 
 - **Canvas statistics and PNG export**
 - **Mobile-responsive drawer** with touch support
 - **ARIA-accessible keyboard controls**
+- **Cloudflare Turnstile** bot protection on pixel placement
+- **Embeddable widget** (`bitbrush-widget.js`) for cross-origin embedding with pinch-to-zoom, pan, and grid overlay
+- **Fly.io deployment** with PostgreSQL, Flyway migrations, and health checks
 
 ## Architecture
 
@@ -33,6 +35,32 @@ docker compose up --build
 Open [http://localhost:8080](http://localhost:8080) in your browser. That's it.
 
 Canvas data persists across container restarts via a Docker volume.
+
+### Embed as a Widget
+
+Include the widget script on any page and configure it to point at your BitBrush server:
+
+```html
+<div id="bitbrush-container"></div>
+<script>
+  window.bitbrushConfig = {
+    server: 'https://bitbrush.fly.dev',
+    container: '#bitbrush-container',
+    turnstileSiteKey: 'YOUR_SITE_KEY'
+  };
+</script>
+<script src="https://bitbrush.fly.dev/bitbrush-widget.js"></script>
+```
+
+### Deploy to Fly.io
+
+```bash
+fly launch           # First-time setup (uses fly.toml defaults: syd region, 512MB)
+fly secrets set DATABASE_URL=postgres://... TURNSTILE_SITE_KEY=... TURNSTILE_SECRET_KEY=...
+fly deploy
+```
+
+Health check: `GET /actuator/health`
 
 ## Development
 

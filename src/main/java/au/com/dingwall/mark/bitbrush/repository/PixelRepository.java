@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Persistence layer for the pixel placement log.
@@ -28,8 +29,7 @@ public interface PixelRepository extends JpaRepository<Pixel, Long> {
             """)
     List<Pixel> findCurrentCanvasState();
 
-    @Query("SELECT p FROM Pixel p WHERE p.x = :x AND p.y = :y ORDER BY p.placedAt DESC")
-    List<Pixel> findByCoordinateOrderByPlacedAtDesc(@Param("x") int x, @Param("y") int y);
+    Optional<Pixel> findFirstByXAndYOrderByPlacedAtDesc(int x, int y);
 
     @Query("""
             SELECT p.x AS x, p.y AS y FROM Pixel p

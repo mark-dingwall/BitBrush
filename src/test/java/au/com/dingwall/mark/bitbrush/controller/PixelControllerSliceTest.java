@@ -60,7 +60,7 @@ class PixelControllerSliceTest {
     }
 
     @Test
-    void postPixels_validRequest_returns200() throws Exception {
+    void postPixels_validRequest_returns201() throws Exception {
         doNothing().when(pixelService).placePixels(any());
 
         mockMvc.perform(post("/api/pixels")
@@ -72,7 +72,7 @@ class PixelControllerSliceTest {
                                   "authorUuid": "test-uuid"
                                 }
                                 """))
-                .andExpect(status().isOk());
+                .andExpect(status().isCreated());
 
         verify(pixelService).placePixels(any());
     }

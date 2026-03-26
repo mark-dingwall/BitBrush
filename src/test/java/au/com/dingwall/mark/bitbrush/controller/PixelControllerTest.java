@@ -76,7 +76,7 @@ class PixelControllerTest {
     }
 
     @Test
-    void postPixelsReturns200ForValidRequest() throws Exception {
+    void postPixelsReturns201ForValidRequest() throws Exception {
         mockMvc.perform(post("/api/pixels")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
@@ -86,7 +86,7 @@ class PixelControllerTest {
                           "authorUuid": "%s"
                         }
                         """.formatted(TEST_UUID)))
-                .andExpect(status().isOk());
+                .andExpect(status().isCreated());
     }
 
     @Test
@@ -162,7 +162,7 @@ class PixelControllerTest {
                           "authorUuid": "%s"
                         }
                         """.formatted(TEST_UUID)))
-                .andExpect(status().isOk());
+                .andExpect(status().isCreated());
 
         // When/Then: GET /api/pixels/5/7/info returns author info
         mockMvc.perform(get("/api/pixels/5/7/info"))
@@ -208,7 +208,7 @@ class PixelControllerTest {
                               "authorUuid": "%s"
                             }
                             """.formatted(eraserUuid)))
-                    .andExpect(status().isOk());
+                    .andExpect(status().isCreated());
 
             // Verify pixel info exists before erasing
             mockMvc.perform(get("/api/pixels/3/3/info"))
@@ -224,7 +224,7 @@ class PixelControllerTest {
                               "authorUuid": "%s"
                             }
                             """.formatted(eraserUuid)))
-                    .andExpect(status().isOk());
+                    .andExpect(status().isCreated());
 
             // Then: pixel info should return 404 (erased = logically empty)
             mockMvc.perform(get("/api/pixels/3/3/info"))
@@ -258,7 +258,7 @@ class PixelControllerTest {
                               "authorUuid": "%s"
                             }
                             """.formatted(eraserUuid)))
-                    .andExpect(status().isOk());
+                    .andExpect(status().isCreated());
 
             // Erase it
             mockMvc.perform(post("/api/pixels")
@@ -270,7 +270,7 @@ class PixelControllerTest {
                               "authorUuid": "%s"
                             }
                             """.formatted(eraserUuid)))
-                    .andExpect(status().isOk());
+                    .andExpect(status().isCreated());
 
             // Then: canvas state should not contain the erased coordinate
             mockMvc.perform(get("/api/canvas"))
@@ -309,7 +309,7 @@ class PixelControllerTest {
                                   "authorUuid": "%s"
                                 }
                                 """.formatted(i, rate402Uuid)))
-                        .andExpect(status().isOk());
+                        .andExpect(status().isCreated());
             }
             // 6th request — balance is 0
             mockMvc.perform(post("/api/pixels")

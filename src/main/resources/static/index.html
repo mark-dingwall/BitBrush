@@ -1311,7 +1311,9 @@
       if (existing) existing.remove();
       const overlay = document.createElement('div');
       overlay.id = 'canvas-error';
-      overlay.innerHTML = '<span>' + message + '</span>';
+      const span = document.createElement('span');
+      span.textContent = message;
+      overlay.appendChild(span);
       const btn = document.createElement('button');
       btn.textContent = 'Retry';
       btn.addEventListener('click', () => loadCanvas());

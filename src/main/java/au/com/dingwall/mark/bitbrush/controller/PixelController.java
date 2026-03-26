@@ -8,6 +8,7 @@ import au.com.dingwall.mark.bitbrush.service.TurnstileService;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -44,7 +45,7 @@ public class PixelController {
             throw new TurnstileException("Turnstile verification failed");
         }
         pixelService.placePixels(request);
-        return ResponseEntity.ok().build();
+        return ResponseEntity.status(HttpStatus.CREATED).build();
     }
 
     @GetMapping("/pixels/{x}/{y}/info")

@@ -21,6 +21,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Business logic for the shared pixel canvas.
@@ -143,12 +144,12 @@ public class PixelService {
      */
     public PixelInfoResponse getPixelInfo(int x, int y) {
         log.debug("Getting pixel info at ({}, {})", x, y);
-        List<Pixel> pixels = pixelRepository.findByCoordinateOrderByPlacedAtDesc(x, y);
-        if (pixels.isEmpty()) {
+        Optional<Pixel> optionalPixel = pixelRepository.findFirstByXAndYOrderByPlacedAtDesc(x, y);
+        if (optionalPixel.isEmpty()) {
             return null;
         }
 
-        Pixel latest = pixels.getFirst();
+        Pixel latest = optionalPixel.get();
         if (latest.getPaletteIndex() == 0) {
             return null;
         }

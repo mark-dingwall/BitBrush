@@ -10,6 +10,7 @@ import org.springframework.test.context.ActiveProfiles;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -73,7 +74,7 @@ class PixelRepositoryTest {
     }
 
     @Test
-    void findByCoordinateOrderByPlacedAtDesc_returnsLatestFirst() {
+    void findFirstByXAndYOrderByPlacedAtDesc_returnsLatest() {
         Instant first = Instant.parse("2026-01-01T12:00:00Z");
         Instant second = first.plusSeconds(1);
 
@@ -82,11 +83,11 @@ class PixelRepositoryTest {
         pixelRepository.save(p1);
         pixelRepository.save(p2);
 
-        List<Pixel> result = pixelRepository.findByCoordinateOrderByPlacedAtDesc(3, 3);
+        Optional<Pixel> result = pixelRepository.findFirstByXAndYOrderByPlacedAtDesc(3, 3);
 
-        assertThat(result).hasSize(2);
-        assertThat(result.get(0).getPlacedAt()).isEqualTo(second);
-        assertThat(result.get(0).getPaletteIndex()).isEqualTo(2);
+        assertThat(result).isPresent();
+        assertThat(result.get().getPlacedAt()).isEqualTo(second);
+        assertThat(result.get().getPaletteIndex()).isEqualTo(2);
     }
 
     @Test

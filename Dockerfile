@@ -25,6 +25,9 @@ WORKDIR /app
 # Copy only the built JAR from the builder stage
 COPY --from=builder /app/build/libs/*.jar app.jar
 
+RUN adduser --system --no-create-home appuser
+USER appuser
+
 EXPOSE 8080
 
 # Profile set via SPRING_PROFILES_ACTIVE env var (docker-compose.yml or fly.toml)

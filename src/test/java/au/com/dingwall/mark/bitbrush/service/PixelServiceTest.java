@@ -26,6 +26,7 @@ import org.springframework.messaging.simp.SimpMessagingTemplate;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -190,8 +191,8 @@ class PixelServiceTest {
         eraserPixel.setPaletteIndex(0);
         eraserPixel.setAuthorUuid("uuid-eraser");
         eraserPixel.setPlacedAt(Instant.now());
-        when(pixelRepository.findByCoordinateOrderByPlacedAtDesc(5, 5))
-                .thenReturn(List.of(eraserPixel));
+        when(pixelRepository.findFirstByXAndYOrderByPlacedAtDesc(5, 5))
+                .thenReturn(Optional.of(eraserPixel));
 
         // Act
         PixelInfoResponse result = pixelService.getPixelInfo(5, 5);

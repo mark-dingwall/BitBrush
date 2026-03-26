@@ -27,12 +27,12 @@ The dev profile (`application-dev.properties`) uses `ddl-auto=create` — schema
 **Key layers:**
 - `controller/` — REST endpoints under `/api` (`CanvasController`, `PixelController`, `UserController`, `StatsController`)
 - `websocket/` — STOMP controllers (`BankController`, `UserCountController`) and `WebSocketEventListener` for session tracking
-- `service/` — `PixelService` (canvas state, pixel placement, user registration, stats), `BankingService` (placement point banking), `CanvasExportService` (PNG export)
+- `service/` — `PixelService` (canvas state, pixel placement, user registration, stats), `BankingService` (placement point banking), `CanvasExportService` (PNG export), `TurnstileService` (Cloudflare bot verification via RestClient)
 - `repository/` — Spring Data JPA interfaces with custom JPQL queries for last-writer-wins canvas state
 - `model/` — JPA entities: `Pixel` (append-only placement log), `User` (UUID-to-username mapping)
 - `dto/` — Immutable Java records for request/response payloads
-- `config/` — `BitbrushProperties` (type-safe config record), `WebSocketConfig` (STOMP broker + UUID-based Principal), `PaletteConfig` (216-color HSL palette)
-- `exception/` — `GlobalExceptionHandler` returns RFC 7807 ProblemDetail responses
+- `config/` — `BitbrushProperties` (type-safe config record), `WebSocketConfig` (STOMP broker + UUID-based Principal), `PaletteConfig` (216-color web-safe RGB palette (6x6x6 color cube)), `CorsConfig` (allowed origins for GitHub Pages/Fly.io/custom domain), `TurnstileProperties` (Cloudflare Turnstile keys), `StartupLogger`
+- `exception/` — `GlobalExceptionHandler` returns RFC 7807 ProblemDetail responses; custom exceptions include `InsufficientBalanceException`, `TurnstileException`, `UserNotFoundException`
 
 **Real-time architecture:**
 - WebSocket endpoint at `/ws` (SockJS-enabled)
@@ -45,6 +45,21 @@ The dev profile (`application-dev.properties`) uses `ddl-auto=create` — schema
 - Points reset on server restart (intentional design choice)
 - Insufficient balance returns **402 Payment Required** (not 429) via `InsufficientBalanceException` → `GlobalExceptionHandler`
 
+**Bot protection:**
+- Cloudflare Turnstile verifies pixel placement requests via `X-Turnstile-Token` header
+- `TurnstileService` posts to Cloudflare's siteverify endpoint; failure throws `TurnstileException` (→ 403)
+- Site key and secret key configured via env vars (`TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY`) with test-mode defaults
+
+**CORS:**
+- `CorsConfig` allows origins: `*.github.io`, `*.fly.dev`, `mark.dingwall.com.au`, `localhost:*`
+- Allowed headers include `X-Turnstile-Token` for cross-origin widget requests
+
+**Embeddable widget:**
+- `bitbrush-widget.js` — standalone JS file that injects a full BitBrush canvas into any page
+- Configured via `window.bitbrushConfig` (`server`, `container`, `turnstileSiteKey`)
+- Supports pinch-to-zoom, pan, grid overlay at high zoom, and localStorage state persistence
+- Designed for cross-origin embedding (e.g., GitHub Pages pointing at Fly.io backend)
+
 **Eraser convention:** `paletteIndex == 0` is the eraser. All repository queries filter `WHERE paletteIndex <> 0` to exclude erased pixels from canvas state, stats, and author lookups.
 
 **Database migrations:**
@@ -55,7 +70,7 @@ The dev profile (`application-dev.properties`) uses `ddl-auto=create` — schema
 
 | Profile | DB | Schema mgmt | H2 Console | Use case |
 |---------|-----|-------------|------------|----------|
-| `dev` (default) | H2 file: `./data/bitbrush-dev` | `ddl-auto=create` | Yes `/h2-console` | Local development |
+| `dev` | H2 file: `./data/bitbrush-dev` | `ddl-auto=create` | Yes `/h2-console` | Local development (`bootRun` default) |
 | `test` | H2 in-memory | `ddl-auto=create-drop` | No | Test suite |
 | `docker` | PostgreSQL (via docker-compose) | Flyway + `ddl-auto=validate` | No | Container deployment |
 | `prod` | PostgreSQL (via `DATABASE_URL`) | Flyway + `ddl-auto=validate` | No | Fly.io production |
