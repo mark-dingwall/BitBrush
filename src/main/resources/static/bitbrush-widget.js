@@ -56,7 +56,12 @@
     // Footer
     '.bbw-footer { margin-top: 8px; text-align: center; font-size: 11px; }',
     '.bbw-footer a { color: #00cccc; text-decoration: none; }',
-    '.bbw-footer a:hover { text-decoration: underline; }'
+    '.bbw-footer a:hover { text-decoration: underline; }',
+
+    // Zoom indicator
+    '.bbw-zoom-badge { position: absolute; top: 36px; right: 12px; background: rgba(0,204,204,0.15); color: #00cccc; font-size: 11px; padding: 2px 6px; border-radius: 3px; cursor: pointer; opacity: 0; transition: opacity 0.3s; z-index: 5; user-select: none; }',
+    '.bbw-zoom-badge.visible { opacity: 1; }',
+    '.bbw-zoom-badge:hover { background: rgba(0,204,204,0.3); }'
   ].join('\n');
   document.head.appendChild(style);
 
@@ -229,11 +234,26 @@
     root.appendChild(canvas);
 
     var ctx = canvas.getContext('2d');
-    var imageData = ctx.createImageData(WIDTH * SCALE, HEIGHT * SCALE);
+
+    // Offscreen buffer holds the full pixel grid; visible canvas renders a viewport into it
+    var bufferCanvas = document.createElement('canvas');
+    bufferCanvas.width = WIDTH * SCALE;
+    bufferCanvas.height = HEIGHT * SCALE;
+    var bufferCtx = bufferCanvas.getContext('2d');
+    var imageData = bufferCtx.createImageData(WIDTH * SCALE, HEIGHT * SCALE);
     for (var i = 3; i < imageData.data.length; i += 4) {
       imageData.data[i] = 255;
     }
-    ctx.putImageData(imageData, 0, 0);
+    bufferCtx.putImageData(imageData, 0, 0);
+
+    // Zoom indicator badge (clickable to reset)
+    var zoomBadge = document.createElement('div');
+    zoomBadge.className = 'bbw-zoom-badge';
+    zoomBadge.title = 'Reset zoom';
+    root.appendChild(zoomBadge);
+
+    // Initial render of visible canvas
+    ctx.drawImage(bufferCanvas, 0, 0);
 
     // Bank display
     var bankRow = document.createElement('div');
@@ -298,6 +318,79 @@
     var earnCycleKnown = false;
     var bankInitialized = false;
 
+    // ── Viewport state (zoom & pan) ──────────────────────────────────
+    var viewZoom = 1;
+    var viewPanX = WIDTH / 2;   // logical X at center of viewport
+    var viewPanY = HEIGHT / 2;  // logical Y at center of viewport
+    var MIN_ZOOM = 1;
+    var MAX_ZOOM = 12;
+    var activePointers = new Map();
+    var gestureState = null;    // non-null during pinch/pan gesture
+
+    // ── Viewport rendering ────────────────────────────────────────────────────
+    function flushBuffer() {
+      bufferCtx.putImageData(imageData, 0, 0);
+    }
+
+    function renderViewport() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.save();
+      ctx.imageSmoothingEnabled = false;
+      ctx.translate(canvas.width / 2, canvas.height / 2);
+      ctx.scale(viewZoom, viewZoom);
+      ctx.translate(-viewPanX * SCALE, -viewPanY * SCALE);
+      ctx.drawImage(bufferCanvas, 0, 0);
+      ctx.restore();
+      // Update zoom badge
+      if (viewZoom > 1.05) {
+        zoomBadge.textContent = viewZoom.toFixed(1) + 'x';
+        zoomBadge.classList.add('visible');
+      } else {
+        zoomBadge.classList.remove('visible');
+      }
+    }
+
+    function clampPan() {
+      if (viewZoom <= 1) {
+        viewPanX = WIDTH / 2;
+        viewPanY = HEIGHT / 2;
+        return;
+      }
+      var halfVisW = (WIDTH / 2) / viewZoom;
+      var halfVisH = (HEIGHT / 2) / viewZoom;
+      viewPanX = Math.max(halfVisW, Math.min(WIDTH - halfVisW, viewPanX));
+      viewPanY = Math.max(halfVisH, Math.min(HEIGHT - halfVisH, viewPanY));
+    }
+
+    function zoomAtPoint(clientX, clientY, factor) {
+      var rect = canvas.getBoundingClientRect();
+      var css2c = canvas.width / rect.width;
+      var cx = (clientX - rect.left) * css2c;
+      var cy = (clientY - rect.top) * css2c;
+      // Logical coord under cursor before zoom
+      var bufX = (cx - canvas.width / 2) / viewZoom + viewPanX * SCALE;
+      var bufY = (cy - canvas.height / 2) / viewZoom + viewPanY * SCALE;
+      var newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, viewZoom * factor));
+      // Adjust pan so same logical coord stays under cursor
+      viewPanX = (bufX - (cx - canvas.width / 2) / newZoom) / SCALE;
+      viewPanY = (bufY - (cy - canvas.height / 2) / newZoom) / SCALE;
+      viewZoom = newZoom;
+      clampPan();
+      renderViewport();
+    }
+
+    function resetZoom() {
+      viewZoom = 1;
+      viewPanX = WIDTH / 2;
+      viewPanY = HEIGHT / 2;
+      renderViewport();
+    }
+
+    zoomBadge.addEventListener('click', function (e) {
+      e.stopPropagation();
+      resetZoom();
+    });
+
     // ── Canvas rendering ──────────────────────────────────────────────────────
     function paintPixelInBuffer(x, y, hexColor, flush) {
       var rgb = hexToRgb(hexColor);
@@ -310,7 +403,8 @@
         }
       }
       if (flush !== false) {
-        ctx.putImageData(imageData, 0, 0);
+        flushBuffer();
+        renderViewport();
       }
     }
 
@@ -334,22 +428,25 @@
         })
         .then(function (pixels) {
           pixels.forEach(function (p) { paintPixelInBuffer(p.x, p.y, p.color, false); });
-          ctx.putImageData(imageData, 0, 0);
+          flushBuffer();
+          renderViewport();
         })
         .catch(function (err) {
           console.error('[BitBrush Widget] Canvas load error:', err);
         });
     }
 
-    // ── Coordinate mapping ────────────────────────────────────────────────────
+    // ── Coordinate mapping (viewport-aware) ─────────────────────────────────
     function screenToLogical(e) {
       var rect = canvas.getBoundingClientRect();
-      var scaleX = canvas.width / rect.width;
-      var scaleY = canvas.height / rect.height;
-      var cx = (e.clientX - rect.left) * scaleX;
-      var cy = (e.clientY - rect.top) * scaleY;
-      var lx = Math.floor(cx / SCALE);
-      var ly = Math.floor(cy / SCALE);
+      var css2c = canvas.width / rect.width;
+      var cx = (e.clientX - rect.left) * css2c;
+      var cy = (e.clientY - rect.top) * css2c;
+      // Reverse viewport transform: canvas pixel → buffer pixel → logical pixel
+      var bufX = (cx - canvas.width / 2) / viewZoom + viewPanX * SCALE;
+      var bufY = (cy - canvas.height / 2) / viewZoom + viewPanY * SCALE;
+      var lx = Math.floor(bufX / SCALE);
+      var ly = Math.floor(bufY / SCALE);
       return { x: Math.max(0, Math.min(WIDTH - 1, lx)), y: Math.max(0, Math.min(HEIGHT - 1, ly)) };
     }
 
@@ -636,54 +733,8 @@
       if (wasAtMax) showIndeterminateProgress();
     }
 
-    // Pointer events for unified mouse + touch
-    canvas.addEventListener('pointerdown', function (e) {
-      if (e.button !== 0) return;
-      e.preventDefault();
-      e.stopPropagation();
-
-      var username = localStorage.getItem(LS_PREFIX + 'username');
-      var uuid = localStorage.getItem(LS_PREFIX + 'uuid');
-      if (!username || !uuid) return;
-
-      if (localBalance <= 0) {
-        flashBalanceRed();
-        return;
-      }
-
-      var pos = screenToLogical(e);
-      isDragging = true;
-      dragPixels = new Set();
-      dragPixelList = [];
-      lastDragX = pos.x;
-      lastDragY = pos.y;
-      canvas.setPointerCapture(e.pointerId);
-
-      placePixelDuringDrag(pos.x, pos.y);
-    });
-
-    canvas.addEventListener('pointermove', function (e) {
-      if (!isDragging) return;
-      e.preventDefault();
-      e.stopPropagation();
-
-      var pos = screenToLogical(e);
-      if (pos.x !== lastDragX || pos.y !== lastDragY) {
-        var points = bresenhamLine(lastDragX, lastDragY, pos.x, pos.y);
-        for (var i = 1; i < points.length; i++) {
-          placePixelDuringDrag(points[i].x, points[i].y);
-        }
-        lastDragX = pos.x;
-        lastDragY = pos.y;
-      }
-    });
-
-    canvas.addEventListener('pointerup', function (e) {
-      if (!isDragging || e.button !== 0) return;
-      isDragging = false;
-
+    function flushDragPixels() {
       if (dragPixelList.length === 0) return;
-
       var uuid = localStorage.getItem(LS_PREFIX + 'uuid');
       var pixelsBatch = dragPixelList.slice();
       dragPixels = new Set();
@@ -711,9 +762,138 @@
       }).catch(function () {
         loadCanvas();
       });
+    }
+
+    // ── Gesture helpers ──────────────────────────────────────────────────────
+    function pointerDist(a, b) {
+      var dx = a.x - b.x, dy = a.y - b.y;
+      return Math.sqrt(dx * dx + dy * dy);
+    }
+
+    function pointerMid(a, b) {
+      return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    }
+
+    function startGesture() {
+      var pts = Array.from(activePointers.values());
+      if (pts.length < 2) return;
+      gestureState = {
+        startDist: pointerDist(pts[0], pts[1]),
+        startZoom: viewZoom,
+        startMidX: (pts[0].x + pts[1].x) / 2,
+        startMidY: (pts[0].y + pts[1].y) / 2,
+        startPanX: viewPanX,
+        startPanY: viewPanY
+      };
+    }
+
+    function updateGesture() {
+      if (!gestureState) return;
+      var pts = Array.from(activePointers.values());
+      if (pts.length < 2) return;
+
+      var newDist = pointerDist(pts[0], pts[1]);
+      var newMid = pointerMid(pts[0], pts[1]);
+      var zoomFactor = newDist / gestureState.startDist;
+      var newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, gestureState.startZoom * zoomFactor));
+
+      // The logical coord at the initial midpoint should move to the new midpoint
+      var rect = canvas.getBoundingClientRect();
+      var css2c = canvas.width / rect.width;
+      var initCX = (gestureState.startMidX - rect.left) * css2c;
+      var initCY = (gestureState.startMidY - rect.top) * css2c;
+      var logX = (initCX - canvas.width / 2) / gestureState.startZoom + gestureState.startPanX * SCALE;
+      var logY = (initCY - canvas.height / 2) / gestureState.startZoom + gestureState.startPanY * SCALE;
+
+      var newCX = (newMid.x - rect.left) * css2c;
+      var newCY = (newMid.y - rect.top) * css2c;
+      viewPanX = (logX - (newCX - canvas.width / 2) / newZoom) / SCALE;
+      viewPanY = (logY - (newCY - canvas.height / 2) / newZoom) / SCALE;
+      viewZoom = newZoom;
+      clampPan();
+      renderViewport();
+    }
+
+    // ── Pointer events (drawing + gestures) ──────────────────────────────────
+    canvas.addEventListener('pointerdown', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+      // Two+ pointers → switch to gesture mode
+      if (activePointers.size >= 2) {
+        if (isDragging) {
+          isDragging = false;
+          flushDragPixels();
+        }
+        startGesture();
+        return;
+      }
+
+      // Gesture just ended — don't start drawing on the lingering pointer
+      if (gestureState) return;
+
+      // Single pointer: start drawing
+      if (e.button !== 0) return;
+      var username = localStorage.getItem(LS_PREFIX + 'username');
+      var uuid = localStorage.getItem(LS_PREFIX + 'uuid');
+      if (!username || !uuid) return;
+
+      if (localBalance <= 0) {
+        flashBalanceRed();
+        return;
+      }
+
+      var pos = screenToLogical(e);
+      isDragging = true;
+      dragPixels = new Set();
+      dragPixelList = [];
+      lastDragX = pos.x;
+      lastDragY = pos.y;
+      canvas.setPointerCapture(e.pointerId);
+
+      placePixelDuringDrag(pos.x, pos.y);
     });
 
-    canvas.addEventListener('pointercancel', function () {
+    canvas.addEventListener('pointermove', function (e) {
+      if (!activePointers.has(e.pointerId)) return;
+      activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      e.preventDefault();
+      e.stopPropagation();
+
+      if (gestureState && activePointers.size >= 2) {
+        updateGesture();
+        return;
+      }
+
+      if (!isDragging) return;
+      var pos = screenToLogical(e);
+      if (pos.x !== lastDragX || pos.y !== lastDragY) {
+        var points = bresenhamLine(lastDragX, lastDragY, pos.x, pos.y);
+        for (var i = 1; i < points.length; i++) {
+          placePixelDuringDrag(points[i].x, points[i].y);
+        }
+        lastDragX = pos.x;
+        lastDragY = pos.y;
+      }
+    });
+
+    canvas.addEventListener('pointerup', function (e) {
+      activePointers.delete(e.pointerId);
+
+      if (gestureState) {
+        if (activePointers.size < 2) gestureState = null;
+        return;
+      }
+
+      if (!isDragging || e.button !== 0) return;
+      isDragging = false;
+      flushDragPixels();
+    });
+
+    canvas.addEventListener('pointercancel', function (e) {
+      activePointers.delete(e.pointerId);
+      if (gestureState && activePointers.size < 2) gestureState = null;
       isDragging = false;
       dragPixels = new Set();
       dragPixelList = [];
@@ -721,6 +901,14 @@
 
     // Prevent touch scrolling on canvas
     canvas.addEventListener('touchstart', function (e) { e.preventDefault(); }, { passive: false });
+
+    // ── Mouse wheel zoom ─────────────────────────────────────────────────────
+    canvas.addEventListener('wheel', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      var factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+      zoomAtPoint(e.clientX, e.clientY, factor);
+    }, { passive: false });
 
     // ── Turnstile ─────────────────────────────────────────────────────────────
     function refreshTurnstileToken() {
