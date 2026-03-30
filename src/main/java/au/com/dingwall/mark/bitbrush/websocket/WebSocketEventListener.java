@@ -4,6 +4,7 @@ import au.com.dingwall.mark.bitbrush.service.BankingService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.event.EventListener;
+import org.springframework.messaging.Message;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.messaging.simp.stomp.StompHeaderAccessor;
 import org.springframework.stereotype.Component;
@@ -41,10 +42,21 @@ public class WebSocketEventListener {
     }
 
     @EventListener
+    @SuppressWarnings("unchecked")
     public void handleConnect(SessionConnectedEvent event) {
         StompHeaderAccessor accessor = StompHeaderAccessor.wrap(event.getMessage());
         String sessionId = accessor.getSessionId();
-        String uuid = accessor.getFirstNativeHeader("uuid");
+
+        // SessionConnectedEvent wraps the broker's CONNECT_ACK message, not the client's
+        // CONNECT frame. The CONNECT_ACK has no native headers from the client.
+        // The original CONNECT message is embedded under the "simpConnectMessage" header.
+        String uuid = null;
+        Message<byte[]> connectMessage =
+                (Message<byte[]>) accessor.getHeader("simpConnectMessage");
+        if (connectMessage != null) {
+            StompHeaderAccessor connectAccessor = StompHeaderAccessor.wrap(connectMessage);
+            uuid = connectAccessor.getFirstNativeHeader("uuid");
+        }
         sessions.add(sessionId);
         if (uuid != null && !uuid.isBlank()) {
             sessionToUuid.put(sessionId, uuid);

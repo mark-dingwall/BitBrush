@@ -26,6 +26,7 @@ import org.springframework.web.socket.sockjs.client.SockJsClient;
 import org.springframework.web.socket.sockjs.client.WebSocketTransport;
 
 import java.lang.reflect.Type;
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.BlockingQueue;
@@ -33,7 +34,11 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
+import org.springframework.context.event.EventListener;
+import org.springframework.messaging.simp.stomp.StompHeaderAccessor;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.web.socket.WebSocketHttpHeaders;
+import org.springframework.web.socket.messaging.SessionConnectedEvent;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -68,7 +73,57 @@ import static org.mockito.Mockito.when;
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
+@org.springframework.context.annotation.Import(WebSocketIntegrationTest.ConnectedEventCapture.class)
 class WebSocketIntegrationTest {
+
+    /**
+     * Test helper: captures the uuid extracted from SessionConnectedEvent's native headers.
+     * Imported into the test application context via @Import.
+     */
+    static class ConnectedEventCapture {
+        private final BlockingQueue<String> capturedUuids = new LinkedBlockingQueue<>();
+        private final BlockingQueue<String> capturedUuidsViaConnectMessage = new LinkedBlockingQueue<>();
+
+        @EventListener
+        @SuppressWarnings("unchecked")
+        public void onConnected(SessionConnectedEvent event) {
+            StompHeaderAccessor accessor = StompHeaderAccessor.wrap(event.getMessage());
+
+            // Approach 1: direct getFirstNativeHeader (what the production code does)
+            String uuid = accessor.getFirstNativeHeader("uuid");
+            capturedUuids.offer(uuid != null ? uuid : "NULL");
+
+            // Approach 2: extract from the embedded simpConnectMessage header
+            org.springframework.messaging.Message<byte[]> connectMessage =
+                    (org.springframework.messaging.Message<byte[]>) accessor.getHeader("simpConnectMessage");
+            if (connectMessage != null) {
+                StompHeaderAccessor connectAccessor = StompHeaderAccessor.wrap(connectMessage);
+                String connectUuid = connectAccessor.getFirstNativeHeader("uuid");
+                capturedUuidsViaConnectMessage.offer(connectUuid != null ? connectUuid : "NULL");
+            } else {
+                capturedUuidsViaConnectMessage.offer("NO_CONNECT_MSG");
+            }
+        }
+
+        /**
+         * Polls for the next captured uuid via direct native header (blocks up to timeout).
+         */
+        String pollUuid(long timeout, TimeUnit unit) throws InterruptedException {
+            return capturedUuids.poll(timeout, unit);
+        }
+
+        /**
+         * Polls for the next captured uuid via simpConnectMessage (blocks up to timeout).
+         */
+        String pollUuidViaConnectMessage(long timeout, TimeUnit unit) throws InterruptedException {
+            return capturedUuidsViaConnectMessage.poll(timeout, unit);
+        }
+
+        void clear() {
+            capturedUuids.clear();
+            capturedUuidsViaConnectMessage.clear();
+        }
+    }
 
     @LocalServerPort
     int port;
@@ -81,6 +136,9 @@ class WebSocketIntegrationTest {
 
     @Autowired
     BankingService bankingService;
+
+    @Autowired
+    ConnectedEventCapture connectedEventCapture;
 
     @MockitoBean
     TurnstileService turnstileService;
@@ -105,12 +163,35 @@ class WebSocketIntegrationTest {
         return session;
     }
 
+    /**
+     * Creates a connected StompSession that sends a "uuid" STOMP CONNECT header.
+     * Uses the connectAsync overload that accepts StompHeaders.
+     */
+    private StompSession connectWithUuid(String uuid) throws Exception {
+        WebSocketStompClient stompClient = new WebSocketStompClient(
+                new SockJsClient(List.of(new WebSocketTransport(new StandardWebSocketClient())))
+        );
+        stompClient.setMessageConverter(new MappingJackson2MessageConverter());
+        StompHeaders connectHeaders = new StompHeaders();
+        connectHeaders.add("uuid", uuid);
+        StompSession session = stompClient
+                .connectAsync(
+                        URI.create("http://localhost:" + port + "/ws"),
+                        new WebSocketHttpHeaders(),
+                        connectHeaders,
+                        new StompSessionHandlerAdapter() {})
+                .get(5, TimeUnit.SECONDS);
+        openSessions.add(session);
+        return session;
+    }
+
     // WebSocket sessions are persistent (unlike HTTP request/response).
     // Must explicitly disconnect to avoid session leaks between tests.
     // Laravel: No equivalent -- HTTP tests are stateless by nature.
     @BeforeEach
     void allowTurnstile() {
         when(turnstileService.verify(any())).thenReturn(true);
+        connectedEventCapture.clear();
     }
 
     @AfterEach
@@ -123,6 +204,7 @@ class WebSocketIntegrationTest {
         openSessions.clear();
         // Clean up any manually registered bank entries from pixel broadcast test
         bankingService.onUserDisconnect("ws-test-uuid-pixel");
+        connectedEventCapture.clear();
     }
 
     /**
@@ -246,5 +328,36 @@ class WebSocketIntegrationTest {
         openSessions.remove(clientB);
         Integer countAfterBDisconnected = counts.poll(5, TimeUnit.SECONDS);
         assertThat(countAfterBDisconnected).isNotNull().isLessThan(countAfterBConnected);
+    }
+
+    /**
+     * Proves that getFirstNativeHeader("uuid") returns null on SessionConnectedEvent's
+     * CONNECT_ACK message, but the uuid IS available via the embedded simpConnectMessage.
+     *
+     * This test documents the Spring framework behavior:
+     * - SessionConnectedEvent wraps the broker's CONNECT_ACK, not the client's CONNECT frame
+     * - The CONNECT_ACK has no client native headers
+     * - The original CONNECT message is embedded in the "simpConnectMessage" header
+     */
+    @Test
+    void sessionConnectedEventPreservesClientNativeHeaders() throws Exception {
+        String testUuid = "header-probe-uuid-" + System.nanoTime();
+        connectWithUuid(testUuid);
+
+        // Wait for the SessionConnectedEvent to fire and our capture listener to record it
+        String directCapture = connectedEventCapture.pollUuid(5, TimeUnit.SECONDS);
+        String viaConnectMessage = connectedEventCapture.pollUuidViaConnectMessage(5, TimeUnit.SECONDS);
+
+        // Direct getFirstNativeHeader on the CONNECTED/CONNECT_ACK message returns null.
+        assertThat(directCapture)
+                .as("getFirstNativeHeader('uuid') on CONNECT_ACK message is NULL (native headers not preserved)")
+                .isEqualTo("NULL");
+
+        // But extracting the original CONNECT message from simpConnectMessage header DOES work.
+        assertThat(viaConnectMessage)
+                .as("getFirstNativeHeader('uuid') via simpConnectMessage should return the client's uuid")
+                .isNotNull()
+                .isNotEqualTo("NULL")
+                .isEqualTo(testUuid);
     }
 }

@@ -667,6 +667,22 @@
       }
     }
 
+    function waitForTurnstileToken(timeoutMs = 5000) {
+      return new Promise((resolve) => {
+        if (turnstileToken) return resolve(true);
+        const start = Date.now();
+        const interval = setInterval(() => {
+          if (turnstileToken) {
+            clearInterval(interval);
+            resolve(true);
+          } else if (Date.now() - start >= timeoutMs) {
+            clearInterval(interval);
+            resolve(false);
+          }
+        }, 100);
+      });
+    }
+
     function turnstileHeaders() {
       const h = { 'Content-Type': 'application/json' };
       if (turnstileToken) h['X-Turnstile-Token'] = turnstileToken;
@@ -1660,16 +1676,26 @@
       const uuid = getOrCreateUuid();
       const username = localStorage.getItem('bitbrush_username');
       if (!username) {
+        await waitForTurnstileToken();
         showModal(uuid);
       } else {
         // Re-register silently — DB may have been reset (ddl-auto=create)
+        await waitForTurnstileToken();
         try {
           const resp = await fetch('/api/users', {
             method: 'POST',
             headers: turnstileHeaders(),
             body: JSON.stringify({ uuid, username })
           });
-          if (resp.status === 403) refreshTurnstile();
+          if (resp.status === 403) {
+            refreshTurnstile();
+            await waitForTurnstileToken();
+            await fetch('/api/users', {
+              method: 'POST',
+              headers: turnstileHeaders(),
+              body: JSON.stringify({ uuid, username })
+            });
+          }
         } catch (_) { /* best effort */ }
         // Show hints if returning user hasn't seen them
         showHintOverlay();

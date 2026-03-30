@@ -727,6 +727,21 @@
           method: 'POST',
           headers: headers,
           body: JSON.stringify({ uuid: uuid, username: username })
+        }).then(function (resp) {
+          if (resp.status === 403) {
+            refreshTurnstileToken();
+            return waitForTurnstileToken().then(function () {
+              var retryHeaders = { 'Content-Type': 'application/json' };
+              if (turnstileToken) {
+                retryHeaders['X-Turnstile-Token'] = turnstileToken;
+              }
+              return fetch(SERVER + '/api/users', {
+                method: 'POST',
+                headers: retryHeaders,
+                body: JSON.stringify({ uuid: uuid, username: username })
+              });
+            });
+          }
         }).catch(function () { /* best effort */ });
       }
     }
@@ -941,13 +956,31 @@
       }
     }
 
+    function waitForTurnstileToken(timeoutMs) {
+      var timeout = timeoutMs || 5000;
+      return new Promise(function (resolve) {
+        if (turnstileToken) return resolve(true);
+        var start = Date.now();
+        var interval = setInterval(function () {
+          if (turnstileToken) {
+            clearInterval(interval);
+            resolve(true);
+          } else if (Date.now() - start >= timeout) {
+            clearInterval(interval);
+            resolve(false);
+          }
+        }, 100);
+      });
+    }
+
     function initTurnstile() {
       if (!TURNSTILE_SITE_KEY) return Promise.resolve();
 
       return loadScript('https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit', 10000)
         .then(function () {
           return new Promise(function (resolve) {
-            // Turnstile may need a moment after script load
+            var resolved = false;
+            function doResolve() { if (!resolved) { resolved = true; resolve(); } }
             function tryRender() {
               if (window.turnstile) {
                 turnstileContainer.style.display = 'block';
@@ -955,16 +988,18 @@
                   sitekey: TURNSTILE_SITE_KEY,
                   callback: function (token) {
                     turnstileToken = token;
+                    doResolve();
                   },
                   'expired-callback': function () {
                     turnstileToken = null;
                   },
                   'error-callback': function () {
                     turnstileToken = null;
+                    doResolve();
                   },
                   size: 'invisible'
                 });
-                resolve();
+                setTimeout(doResolve, 10000);
               } else {
                 setTimeout(tryRender, 100);
               }
