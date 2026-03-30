@@ -688,6 +688,7 @@
         var headers = { 'Content-Type': 'application/json' };
         if (turnstileToken) {
           headers['X-Turnstile-Token'] = turnstileToken;
+          refreshTurnstileToken();
         }
 
         fetch(SERVER + '/api/users', {
@@ -722,6 +723,7 @@
         var headers = { 'Content-Type': 'application/json' };
         if (turnstileToken) {
           headers['X-Turnstile-Token'] = turnstileToken;
+          refreshTurnstileToken();
         }
         fetch(SERVER + '/api/users', {
           method: 'POST',
@@ -734,6 +736,7 @@
               var retryHeaders = { 'Content-Type': 'application/json' };
               if (turnstileToken) {
                 retryHeaders['X-Turnstile-Token'] = turnstileToken;
+                refreshTurnstileToken();
               }
               return fetch(SERVER + '/api/users', {
                 method: 'POST',
@@ -781,6 +784,7 @@
       var headers = { 'Content-Type': 'application/json' };
       if (turnstileToken) {
         headers['X-Turnstile-Token'] = turnstileToken;
+        refreshTurnstileToken();
       }
 
       fetch(SERVER + '/api/pixels', {

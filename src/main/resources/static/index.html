@@ -687,7 +687,10 @@
 
     function turnstileHeaders() {
       const h = { 'Content-Type': 'application/json' };
-      if (turnstileToken) h['X-Turnstile-Token'] = turnstileToken;
+      if (turnstileToken) {
+        h['X-Turnstile-Token'] = turnstileToken;
+        refreshTurnstile(); // consume: immediately start generating next token
+      }
       return h;
     }
 
@@ -1990,6 +1993,7 @@
       dragPixelList = [];
 
       try {
+        await waitForTurnstileToken(2000);
         const resp = await fetch('/api/pixels', {
           method: 'POST',
           headers: turnstileHeaders(),
