@@ -15,6 +15,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -97,6 +98,29 @@ class UserControllerTest {
                         {"uuid": "uuid-you-test", "username": "You"}
                         """))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void postUsersReturns201ForReregistrationWithoutTurnstile() throws Exception {
+        // First registration — Turnstile is mocked to pass
+        mockMvc.perform(post("/api/users")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {"uuid": "uuid-reregister", "username": "returninguser"}
+                        """))
+                .andExpect(status().isCreated());
+
+        // Reset Turnstile mock — verifyAndRemember now returns false (token rejected)
+        reset(turnstileService);
+        when(turnstileService.verifyAndRemember(any(), any())).thenReturn(false);
+
+        // Re-registration should succeed because user already exists in DB
+        mockMvc.perform(post("/api/users")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {"uuid": "uuid-reregister", "username": "returninguser"}
+                        """))
+                .andExpect(status().isCreated());
     }
 
     @Test

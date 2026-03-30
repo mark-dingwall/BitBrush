@@ -121,6 +121,13 @@ public class PixelService {
     }
 
     /**
+     * Returns true if a user with the given UUID already exists in the database.
+     */
+    public boolean userExists(String uuid) {
+        return userRepository.existsById(uuid);
+    }
+
+    /**
      * Registers a UUID-to-username mapping for pixel authorship.
      */
     public void registerUser(UserRegistrationRequest req) {

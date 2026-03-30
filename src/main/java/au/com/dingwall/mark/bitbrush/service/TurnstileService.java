@@ -50,6 +50,12 @@ public class TurnstileService {
         return uuid != null && verifiedUuids.contains(uuid);
     }
 
+    public void markVerified(String uuid) {
+        if (uuid != null) {
+            verifiedUuids.add(uuid);
+        }
+    }
+
     public void removeVerified(String uuid) {
         if (uuid != null) {
             verifiedUuids.remove(uuid);

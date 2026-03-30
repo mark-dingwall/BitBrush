@@ -37,7 +37,10 @@ public class UserController {
             @Valid @RequestBody UserRegistrationRequest req,
             @RequestHeader(value = "X-Turnstile-Token", required = false) String turnstileToken) {
         log.debug("POST /api/users: uuid={}", req.uuid());
-        if (!turnstileService.verifyAndRemember(turnstileToken, req.uuid())) {
+        if (pixelService.userExists(req.uuid())) {
+            // Returning user — already verified once, re-add to session cache
+            turnstileService.markVerified(req.uuid());
+        } else if (!turnstileService.verifyAndRemember(turnstileToken, req.uuid())) {
             throw new TurnstileException("Turnstile verification failed");
         }
         pixelService.registerUser(req);

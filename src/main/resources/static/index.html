@@ -1681,11 +1681,10 @@
       const uuid = getOrCreateUuid();
       const username = localStorage.getItem('bitbrush_username');
       if (!username) {
-        await waitForTurnstileToken();
+        await waitForTurnstileToken(15000);
         showModal(uuid);
       } else {
-        // Re-register silently — DB may have been reset (ddl-auto=create)
-        await waitForTurnstileToken();
+        // Re-register silently — server skips Turnstile for existing users
         try {
           const resp = await fetch('/api/users', {
             method: 'POST',
@@ -1693,8 +1692,8 @@
             body: JSON.stringify({ uuid, username })
           });
           if (resp.status === 403) {
-            refreshTurnstile();
-            await waitForTurnstileToken();
+            // DB was likely wiped — need fresh Turnstile token
+            await waitForTurnstileToken(15000);
             await fetch('/api/users', {
               method: 'POST',
               headers: turnstileHeaders(),
