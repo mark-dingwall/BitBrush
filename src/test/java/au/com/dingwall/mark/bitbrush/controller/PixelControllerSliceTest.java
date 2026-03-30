@@ -56,7 +56,7 @@ class PixelControllerSliceTest {
 
     @BeforeEach
     void allowTurnstile() {
-        when(turnstileService.verify(any())).thenReturn(true);
+        when(turnstileService.isVerified(any())).thenReturn(true);
     }
 
     @Test

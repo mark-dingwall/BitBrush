@@ -781,15 +781,9 @@
       dragPixels = new Set();
       dragPixelList = [];
 
-      var headers = { 'Content-Type': 'application/json' };
-      if (turnstileToken) {
-        headers['X-Turnstile-Token'] = turnstileToken;
-        refreshTurnstileToken();
-      }
-
       fetch(SERVER + '/api/pixels', {
         method: 'POST',
-        headers: headers,
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           pixels: pixelsBatch,
           paletteIndex: selectedPaletteIndex,
@@ -798,7 +792,6 @@
       }).then(function (resp) {
         if (!resp.ok) {
           if (resp.status === 402) flashBalanceRed();
-          if (resp.status === 403) refreshTurnstileToken();
           loadCanvas();
         }
       }).catch(function () {

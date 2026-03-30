@@ -14,6 +14,8 @@ import org.springframework.web.client.RestClient;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 public class TurnstileService {
@@ -23,6 +25,7 @@ public class TurnstileService {
 
     private final TurnstileProperties properties;
     private final RestClient restClient;
+    private final Set<String> verifiedUuids = ConcurrentHashMap.newKeySet();
 
     public TurnstileService(TurnstileProperties properties, RestClient.Builder restClientBuilder) {
         this.properties = properties;
@@ -30,6 +33,27 @@ public class TurnstileService {
         factory.setConnectTimeout(Duration.ofSeconds(5));
         factory.setReadTimeout(Duration.ofSeconds(10));
         this.restClient = restClientBuilder.requestFactory(factory).build();
+    }
+
+    /**
+     * Verify a Turnstile token and mark the UUID as verified on success.
+     */
+    public boolean verifyAndRemember(String token, String uuid) {
+        boolean result = verify(token);
+        if (result && uuid != null) {
+            verifiedUuids.add(uuid);
+        }
+        return result;
+    }
+
+    public boolean isVerified(String uuid) {
+        return uuid != null && verifiedUuids.contains(uuid);
+    }
+
+    public void removeVerified(String uuid) {
+        if (uuid != null) {
+            verifiedUuids.remove(uuid);
+        }
     }
 
     public boolean verify(String token) {

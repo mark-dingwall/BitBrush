@@ -58,7 +58,8 @@ class PixelControllerTest {
 
     @BeforeEach
     void registerTestUser() throws Exception {
-        when(turnstileService.verify(any())).thenReturn(true);
+        when(turnstileService.verifyAndRemember(any(), any())).thenReturn(true);
+        when(turnstileService.isVerified(any())).thenReturn(true);
         mockMvc.perform(post("/api/users")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""

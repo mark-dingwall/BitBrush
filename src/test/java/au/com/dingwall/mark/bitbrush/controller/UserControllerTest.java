@@ -42,7 +42,7 @@ class UserControllerTest {
 
     @BeforeEach
     void allowTurnstile() {
-        when(turnstileService.verify(any())).thenReturn(true);
+        when(turnstileService.verifyAndRemember(any(), any())).thenReturn(true);
     }
 
     @AfterEach

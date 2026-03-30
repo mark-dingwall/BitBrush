@@ -190,7 +190,8 @@ class WebSocketIntegrationTest {
     // Laravel: No equivalent -- HTTP tests are stateless by nature.
     @BeforeEach
     void allowTurnstile() {
-        when(turnstileService.verify(any())).thenReturn(true);
+        when(turnstileService.verifyAndRemember(any(), any())).thenReturn(true);
+        when(turnstileService.isVerified(any())).thenReturn(true);
         connectedEventCapture.clear();
     }
 

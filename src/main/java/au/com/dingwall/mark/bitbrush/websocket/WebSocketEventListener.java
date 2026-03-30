@@ -1,6 +1,7 @@
 package au.com.dingwall.mark.bitbrush.websocket;
 
 import au.com.dingwall.mark.bitbrush.service.BankingService;
+import au.com.dingwall.mark.bitbrush.service.TurnstileService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.event.EventListener;
@@ -34,11 +35,14 @@ public class WebSocketEventListener {
     private final ConcurrentHashMap<String, String> sessionToUuid = new ConcurrentHashMap<>();
     private final SimpMessagingTemplate messagingTemplate;
     private final BankingService bankingService;
+    private final TurnstileService turnstileService;
 
     public WebSocketEventListener(SimpMessagingTemplate messagingTemplate,
-                                   BankingService bankingService) {
+                                   BankingService bankingService,
+                                   TurnstileService turnstileService) {
         this.messagingTemplate = messagingTemplate;
         this.bankingService = bankingService;
+        this.turnstileService = turnstileService;
     }
 
     @EventListener
@@ -73,6 +77,7 @@ public class WebSocketEventListener {
         String uuid = sessionToUuid.remove(sessionId);
         if (uuid != null) {
             bankingService.onUserDisconnect(uuid);
+            turnstileService.removeVerified(uuid);
         }
         broadcastCount();
         log.debug("WebSocket disconnected: sessionId={}, uuid={}, total={}", sessionId, uuid, sessions.size());

@@ -41,7 +41,7 @@ public class PixelController {
             @Valid @RequestBody PixelPlacementRequest request,
             @RequestHeader(value = "X-Turnstile-Token", required = false) String turnstileToken) {
         log.debug("POST /api/pixels: {} pixels, paletteIndex={}", request.pixels().size(), request.paletteIndex());
-        if (!turnstileService.verify(turnstileToken)) {
+        if (!turnstileService.isVerified(request.authorUuid()) && !turnstileService.verify(turnstileToken)) {
             throw new TurnstileException("Turnstile verification failed");
         }
         pixelService.placePixels(request);

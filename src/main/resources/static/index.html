@@ -1863,7 +1863,7 @@
         // Send placement to server
         fetch('/api/pixels', {
           method: 'POST',
-          headers: turnstileHeaders(),
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             pixels: [{ x: kbCursorX, y: kbCursorY }],
             paletteIndex: selectedPaletteIndex,
@@ -1872,7 +1872,7 @@
         }).then(resp => {
           if (resp.ok) fetchStats();
           else if (resp.status === 402) flashBalanceRed();
-          else if (resp.status === 403) { refreshTurnstile(); showErrorFlash('Verification failed — retrying'); }
+          else if (resp.status === 403) showErrorFlash('Verification failed — please reload');
           else { showErrorFlash('Pixel placement failed'); loadCanvas(); }
         }).catch(err => {
           showErrorFlash('Network error placing pixel');
@@ -1993,10 +1993,9 @@
       dragPixelList = [];
 
       try {
-        await waitForTurnstileToken(2000);
         const resp = await fetch('/api/pixels', {
           method: 'POST',
-          headers: turnstileHeaders(),
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             pixels: pixelsBatch,
             paletteIndex: selectedPaletteIndex,
@@ -2007,8 +2006,6 @@
         if (!resp.ok) {
           if (resp.status === 402) {
             flashBalanceRed();
-          } else if (resp.status === 403) {
-            refreshTurnstile();
           }
           showErrorFlash('Pixel placement failed');
           loadCanvas();
