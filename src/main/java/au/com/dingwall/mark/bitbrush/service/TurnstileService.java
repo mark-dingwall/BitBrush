@@ -13,6 +13,7 @@ import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 
 import java.time.Duration;
+import java.util.List;
 
 @Service
 public class TurnstileService {
@@ -54,7 +55,9 @@ public class TurnstileService {
                 return false;
             }
 
-            log.debug("Turnstile verification result: success={}", response.success());
+            if (!response.success()) {
+                log.warn("Turnstile verification failed: error-codes={}", response.errorCodes());
+            }
             return response.success();
         } catch (Exception e) {
             log.error("Turnstile verification failed with exception", e);
@@ -64,6 +67,7 @@ public class TurnstileService {
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     record TurnstileResponse(
-            @JsonProperty("success") boolean success
+            @JsonProperty("success") boolean success,
+            @JsonProperty("error-codes") List<String> errorCodes
     ) {}
 }

@@ -951,6 +951,7 @@
 
     // ── Turnstile ─────────────────────────────────────────────────────────────
     function refreshTurnstileToken() {
+      turnstileToken = null;
       if (window.turnstile && turnstileWidgetId != null) {
         window.turnstile.reset(turnstileWidgetId);
       }

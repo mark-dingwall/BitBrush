@@ -662,6 +662,7 @@
     initTurnstile();
 
     function refreshTurnstile() {
+      turnstileToken = null;
       if (typeof turnstile !== 'undefined' && turnstileWidgetId != null) {
         turnstile.reset(turnstileWidgetId);
       }
