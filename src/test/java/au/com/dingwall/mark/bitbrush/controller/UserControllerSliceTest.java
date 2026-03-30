@@ -14,6 +14,8 @@ import org.springframework.test.web.servlet.MockMvc;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -45,6 +47,7 @@ class UserControllerSliceTest {
 
     @BeforeEach
     void allowTurnstile() {
+        when(pixelService.userExists(any())).thenReturn(false);
         when(turnstileService.verifyAndRemember(any(), any())).thenReturn(true);
     }
 
@@ -70,6 +73,38 @@ class UserControllerSliceTest {
                                 {"uuid": "uuid-blank", "username": ""}
                                 """))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void postUsers_existingUser_skipsTurnstile() throws Exception {
+        when(pixelService.userExists("uuid-existing")).thenReturn(true);
+        doNothing().when(pixelService).registerUser(any());
+
+        mockMvc.perform(post("/api/users")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"uuid": "uuid-existing", "username": "existinguser"}
+                                """))
+                .andExpect(status().isCreated());
+
+        verify(turnstileService, never()).verifyAndRemember(any(), any());
+        verify(turnstileService).markVerified("uuid-existing");
+    }
+
+    @Test
+    void postUsers_newUserFailsTurnstile_returns403() throws Exception {
+        when(pixelService.userExists("uuid-new")).thenReturn(false);
+        when(turnstileService.verifyAndRemember(any(), any())).thenReturn(false);
+
+        mockMvc.perform(post("/api/users")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header("X-Turnstile-Token", "bad-token")
+                        .content("""
+                                {"uuid": "uuid-new", "username": "newuser"}
+                                """))
+                .andExpect(status().isForbidden());
+
+        verify(pixelService, never()).registerUser(any());
     }
 
     @Test

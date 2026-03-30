@@ -131,6 +131,45 @@ class PixelControllerSliceTest {
     }
 
     @Test
+    void postPixels_notVerifiedButTokenValid_returns201() throws Exception {
+        when(turnstileService.isVerified(any())).thenReturn(false);
+        when(turnstileService.verify(any())).thenReturn(true);
+        doNothing().when(pixelService).placePixels(any());
+
+        mockMvc.perform(post("/api/pixels")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header("X-Turnstile-Token", "fresh-token")
+                        .content("""
+                                {
+                                  "pixels": [{"x": 10, "y": 20}],
+                                  "paletteIndex": 42,
+                                  "authorUuid": "unverified-uuid"
+                                }
+                                """))
+                .andExpect(status().isCreated());
+
+        verify(turnstileService).verify("fresh-token");
+    }
+
+    @Test
+    void postPixels_notVerifiedAndTokenInvalid_returns403() throws Exception {
+        when(turnstileService.isVerified(any())).thenReturn(false);
+        when(turnstileService.verify(any())).thenReturn(false);
+
+        mockMvc.perform(post("/api/pixels")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header("X-Turnstile-Token", "bad-token")
+                        .content("""
+                                {
+                                  "pixels": [{"x": 10, "y": 20}],
+                                  "paletteIndex": 42,
+                                  "authorUuid": "unverified-uuid"
+                                }
+                                """))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
     void getPixelInfo_outOfBoundsCoordinates_returns400() throws Exception {
         mockMvc.perform(get("/api/pixels/250/250/info"))
                 .andExpect(status().isBadRequest());

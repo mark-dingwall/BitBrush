@@ -16,6 +16,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 /**
@@ -40,10 +41,10 @@ class BankingServiceTest {
 
     @BeforeEach
     void setUp() {
-        when(bitbrushProperties.placement()).thenReturn(placement);
-        when(placement.earnRateSeconds()).thenReturn(3);
-        when(placement.maxBanked()).thenReturn(25);
-        when(placement.startingBalance()).thenReturn(5);
+        lenient().when(bitbrushProperties.placement()).thenReturn(placement);
+        lenient().when(placement.earnRateSeconds()).thenReturn(3);
+        lenient().when(placement.maxBanked()).thenReturn(25);
+        lenient().when(placement.startingBalance()).thenReturn(5);
         bankingService = new BankingService(messagingTemplate, bitbrushProperties);
     }
 
@@ -195,6 +196,26 @@ class BankingServiceTest {
         // Then: returns 2 (partial), not 5
         assertEquals(2, deducted);
         assertEquals(0, bankingService.getInitialState("uuid-dp-2").balance());
+    }
+
+    @Test
+    void getInitialState_nullUuid_returnsStartingBalance() {
+        BankStateResponse r = bankingService.getInitialState(null);
+        assertEquals(5, r.balance());
+        assertEquals(25, r.maxBalance());
+    }
+
+    @Test
+    void getInitialState_unknownUuid_returnsStartingBalance() {
+        BankStateResponse r = bankingService.getInitialState("uuid-never-connected");
+        assertEquals(5, r.balance());
+        assertEquals(25, r.maxBalance());
+    }
+
+    @Test
+    void deductPoint_unknownUuid_throwsInsufficientBalance() {
+        assertThrows(InsufficientBalanceException.class,
+                () -> bankingService.deductPoint("uuid-never-connected"));
     }
 
     @Test
