@@ -639,7 +639,7 @@
   </div>
 
   <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
-  <div id="turnstile-container" style="display:none;"></div>
+  <div id="turnstile-container" style="position:fixed;bottom:10px;right:10px;z-index:10000;"></div>
   <script>
     // ── Turnstile (Cloudflare bot protection) ─────────────────────────────────
     let turnstileToken = null;
@@ -653,7 +653,8 @@
           callback: (token) => { turnstileToken = token; },
           'expired-callback': () => { turnstileToken = null; },
           'error-callback': () => { turnstileToken = null; },
-          size: 'invisible'
+          size: 'compact',
+          appearance: 'interaction-only'
         });
       } else {
         setTimeout(initTurnstile, 200);

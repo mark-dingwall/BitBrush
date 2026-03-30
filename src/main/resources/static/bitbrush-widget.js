@@ -297,7 +297,7 @@
     // Turnstile container (invisible)
     var turnstileContainer = document.createElement('div');
     turnstileContainer.id = 'bbw-turnstile';
-    turnstileContainer.style.display = 'none';
+    turnstileContainer.style.cssText = 'position:fixed;bottom:10px;right:10px;z-index:10000;display:none;';
     root.appendChild(turnstileContainer);
 
     containerEl.appendChild(root);
@@ -998,7 +998,8 @@
                     turnstileToken = null;
                     doResolve();
                   },
-                  size: 'invisible'
+                  size: 'compact',
+                  appearance: 'interaction-only'
                 });
                 setTimeout(doResolve, 10000);
               } else {

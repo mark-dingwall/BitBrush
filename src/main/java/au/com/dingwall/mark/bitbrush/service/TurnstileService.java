@@ -34,7 +34,7 @@ public class TurnstileService {
 
     public boolean verify(String token) {
         if (token == null || token.isBlank()) {
-            log.debug("Turnstile token is missing or blank");
+            log.warn("Turnstile token is missing or blank");
             return false;
         }
 
