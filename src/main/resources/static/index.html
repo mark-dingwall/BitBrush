@@ -447,6 +447,40 @@
       outline-offset: 2px;
     }
 
+    /* Loading overlay */
+    #loading-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.92);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 10;
+      transition: opacity 0.4s ease;
+    }
+    #loading-overlay.fade-out { opacity: 0; }
+    #loading-overlay .loading-text {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 16px;
+      color: #00cccc;
+      margin-bottom: 12px;
+    }
+    #loading-overlay .loading-bar {
+      width: 140px;
+      height: 4px;
+      background: #1a1a1a;
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    #loading-overlay .loading-fill {
+      height: 100%;
+      width: 0%;
+      background: #00cccc;
+      border-radius: 2px;
+      transition: width 0.3s ease;
+    }
+
     /* Hint overlay */
     #hint-overlay {
       position: absolute;
@@ -597,6 +631,10 @@
     <div id="canvas-container" tabindex="0" role="application" aria-label="Pixel canvas, use arrow keys to navigate, Space to place pixel">
       <canvas id="canvas"></canvas>
       <canvas id="overlay"></canvas>
+      <div id="loading-overlay">
+        <div class="loading-text">Loading BitBrush...</div>
+        <div class="loading-bar"><div class="loading-fill"></div></div>
+      </div>
     </div>
     <div id="sidebar">
       <div id="title">bitBrush</div>
@@ -2445,8 +2483,27 @@
       centerCanvas();
       applyTransform();
       renderRecentColors();
+
+      // Loading overlay progress
+      const loadingEl = document.getElementById('loading-overlay');
+      const loadingFillEl = loadingEl ? loadingEl.querySelector('.loading-fill') : null;
+      const loadingTextEl = loadingEl ? loadingEl.querySelector('.loading-text') : null;
+      function setLoadingProgress(pct, text) {
+        if (loadingFillEl) loadingFillEl.style.width = pct + '%';
+        if (loadingTextEl && text) loadingTextEl.textContent = text;
+      }
+      function dismissLoading() {
+        if (!loadingEl) return;
+        setLoadingProgress(100, 'Ready');
+        loadingEl.classList.add('fade-out');
+        setTimeout(() => loadingEl.remove(), 400);
+      }
+
+      setLoadingProgress(30, 'Registering...');
       await initIdentity();
+      setLoadingProgress(60, 'Loading canvas...');
       await loadCanvas();
+      dismissLoading();
       applyTransform();  // re-draw grid over loaded pixels
       connectWebSocket();
       fetchStats();

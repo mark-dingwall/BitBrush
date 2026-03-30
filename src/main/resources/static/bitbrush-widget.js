@@ -61,7 +61,14 @@
     // Zoom indicator
     '.bbw-zoom-badge { position: absolute; top: 36px; right: 12px; background: rgba(0,204,204,0.15); color: #00cccc; font-size: 11px; padding: 2px 6px; border-radius: 3px; cursor: pointer; opacity: 0; transition: opacity 0.3s; z-index: 5; user-select: none; }',
     '.bbw-zoom-badge.visible { opacity: 1; }',
-    '.bbw-zoom-badge:hover { background: rgba(0,204,204,0.3); }'
+    '.bbw-zoom-badge:hover { background: rgba(0,204,204,0.3); }',
+
+    // Loading overlay
+    '.bbw-loading-overlay { position: absolute; inset: 0; background: rgba(10, 10, 10, 0.95); display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: 8px; z-index: 10; transition: opacity 0.5s; }',
+    '.bbw-loading-overlay.fade-out { opacity: 0; }',
+    '.bbw-loading-text { font-size: 14px; color: #00cccc; margin-bottom: 12px; }',
+    '.bbw-loading-bar { width: 120px; height: 4px; background: #1a1a1a; border-radius: 2px; overflow: hidden; }',
+    '.bbw-loading-fill { height: 100%; width: 0%; background: #00cccc; border-radius: 2px; transition: width 0.3s ease; }'
   ].join('\n');
   document.head.appendChild(style);
 
@@ -300,6 +307,21 @@
     turnstileContainer.style.cssText = 'position:fixed;bottom:10px;right:10px;z-index:10000;display:none;';
     root.appendChild(turnstileContainer);
 
+    // Loading overlay
+    var loadingOverlay = document.createElement('div');
+    loadingOverlay.className = 'bbw-loading-overlay';
+    var loadingText = document.createElement('div');
+    loadingText.className = 'bbw-loading-text';
+    loadingText.textContent = 'Loading BitBrush...';
+    var loadingBarOuter = document.createElement('div');
+    loadingBarOuter.className = 'bbw-loading-bar';
+    var loadingFill = document.createElement('div');
+    loadingFill.className = 'bbw-loading-fill';
+    loadingBarOuter.appendChild(loadingFill);
+    loadingOverlay.appendChild(loadingText);
+    loadingOverlay.appendChild(loadingBarOuter);
+    root.appendChild(loadingOverlay);
+
     containerEl.appendChild(root);
 
     // ── State ─────────────────────────────────────────────────────────────────
@@ -327,6 +349,12 @@
     var activePointers = new Map();
     var gestureState = null;    // non-null during pinch/pan gesture
 
+    // Right-click pan state
+    var isPanning = false;
+    var panStartClientX = 0, panStartClientY = 0;
+    var panStartViewX = 0, panStartViewY = 0;
+    var panPointerId = null;
+
     // ── Viewport rendering ────────────────────────────────────────────────────
     function flushBuffer() {
       bufferCtx.putImageData(imageData, 0, 0);
@@ -342,26 +370,31 @@
       ctx.drawImage(bufferCanvas, 0, 0);
       ctx.restore();
 
-      // Draw grid lines at high zoom (4x+) in screen space for crisp 1px lines
+      // Draw grid lines at high zoom (4x+) in transform space for pixel-perfect alignment
       if (viewZoom >= 4) {
-        var cw = canvas.width;
-        var ch = canvas.height;
+        ctx.save();
+        ctx.translate(canvas.width / 2, canvas.height / 2);
+        ctx.scale(viewZoom, viewZoom);
+        ctx.translate(-viewPanX * SCALE, -viewPanY * SCALE);
         ctx.strokeStyle = 'rgba(255, 255, 255, 0.18)';
-        ctx.lineWidth = 1;
+        ctx.lineWidth = 1 / viewZoom;
         ctx.beginPath();
-        for (var gx = 0; gx <= WIDTH; gx++) {
-          var sx = Math.round((gx * SCALE - viewPanX * SCALE) * viewZoom + cw / 2) + 0.5;
-          if (sx < 0 || sx > cw) continue;
-          ctx.moveTo(sx, 0);
-          ctx.lineTo(sx, ch);
+        var halfW = (canvas.width / 2) / viewZoom;
+        var halfH = (canvas.height / 2) / viewZoom;
+        var minGX = Math.max(0, Math.floor((viewPanX * SCALE - halfW) / SCALE));
+        var maxGX = Math.min(WIDTH, Math.ceil((viewPanX * SCALE + halfW) / SCALE));
+        var minGY = Math.max(0, Math.floor((viewPanY * SCALE - halfH) / SCALE));
+        var maxGY = Math.min(HEIGHT, Math.ceil((viewPanY * SCALE + halfH) / SCALE));
+        for (var gx = minGX; gx <= maxGX; gx++) {
+          ctx.moveTo(gx * SCALE, minGY * SCALE);
+          ctx.lineTo(gx * SCALE, maxGY * SCALE);
         }
-        for (var gy = 0; gy <= HEIGHT; gy++) {
-          var sy = Math.round((gy * SCALE - viewPanY * SCALE) * viewZoom + ch / 2) + 0.5;
-          if (sy < 0 || sy > ch) continue;
-          ctx.moveTo(0, sy);
-          ctx.lineTo(cw, sy);
+        for (var gy = minGY; gy <= maxGY; gy++) {
+          ctx.moveTo(minGX * SCALE, gy * SCALE);
+          ctx.lineTo(maxGX * SCALE, gy * SCALE);
         }
         ctx.stroke();
+        ctx.restore();
       }
 
       // Update zoom badge
@@ -453,6 +486,7 @@
           pixels.forEach(function (p) { paintPixelInBuffer(p.x, p.y, p.color, false); });
           flushBuffer();
           renderViewport();
+          dismissLoadingOverlay();
         })
         .catch(function (err) {
           console.error('[BitBrush Widget] Canvas load error:', err);
@@ -868,6 +902,19 @@
       // Gesture just ended — don't start drawing on the lingering pointer
       if (gestureState) return;
 
+      // Right-click: start panning
+      if (e.button === 2) {
+        isPanning = true;
+        panPointerId = e.pointerId;
+        panStartClientX = e.clientX;
+        panStartClientY = e.clientY;
+        panStartViewX = viewPanX;
+        panStartViewY = viewPanY;
+        canvas.setPointerCapture(e.pointerId);
+        canvas.style.cursor = 'grabbing';
+        return;
+      }
+
       // Single pointer: start drawing
       if (e.button !== 0) return;
       var username = localStorage.getItem(LS_PREFIX + 'username');
@@ -901,6 +948,19 @@
         return;
       }
 
+      // Right-click pan
+      if (isPanning && e.pointerId === panPointerId) {
+        var rect = canvas.getBoundingClientRect();
+        var css2c = canvas.width / rect.width;
+        var dx = (e.clientX - panStartClientX) * css2c;
+        var dy = (e.clientY - panStartClientY) * css2c;
+        viewPanX = panStartViewX - dx / (viewZoom * SCALE);
+        viewPanY = panStartViewY - dy / (viewZoom * SCALE);
+        clampPan();
+        renderViewport();
+        return;
+      }
+
       if (!isDragging) return;
       var pos = screenToLogical(e);
       if (pos.x !== lastDragX || pos.y !== lastDragY) {
@@ -921,6 +981,14 @@
         return;
       }
 
+      // End right-click pan
+      if (isPanning && e.pointerId === panPointerId) {
+        isPanning = false;
+        panPointerId = null;
+        canvas.style.cursor = localBalance <= 0 ? 'not-allowed' : 'crosshair';
+        return;
+      }
+
       if (!isDragging || e.button !== 0) return;
       isDragging = false;
       flushDragPixels();
@@ -929,6 +997,11 @@
     canvas.addEventListener('pointercancel', function (e) {
       activePointers.delete(e.pointerId);
       if (gestureState && activePointers.size < 2) gestureState = null;
+      if (isPanning && e.pointerId === panPointerId) {
+        isPanning = false;
+        panPointerId = null;
+        canvas.style.cursor = localBalance <= 0 ? 'not-allowed' : 'crosshair';
+      }
       flushDragPixels();
       isDragging = false;
       dragPixels = new Set();
@@ -945,6 +1018,9 @@
       var factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
       zoomAtPoint(e.clientX, e.clientY, factor);
     }, { passive: false });
+
+    // Prevent context menu on canvas (right-click is used for panning)
+    canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
 
     // ── Turnstile ─────────────────────────────────────────────────────────────
     function refreshTurnstileToken() {
@@ -1045,6 +1121,7 @@
           updateBankDisplay(JSON.parse(message.body));
         });
 
+        setLoadingProgress(80, 'Loading canvas...');
         loadCanvas();
         updateConnectionStatus('connected');
       };
@@ -1057,17 +1134,42 @@
       stompClient = client;
     }
 
+    // ── Loading overlay helpers ────────────────────────────────────────────────
+    var loadingProgress = 0;
+    var loadingDismissed = false;
+
+    function setLoadingProgress(pct, text) {
+      if (loadingDismissed) return;
+      if (pct <= loadingProgress) return;  // high-water mark — never goes backward
+      loadingProgress = pct;
+      loadingFill.style.width = pct + '%';
+      if (text) loadingText.textContent = text;
+    }
+
+    function dismissLoadingOverlay() {
+      if (loadingDismissed) return;
+      loadingDismissed = true;
+      setLoadingProgress(100, 'Ready');
+      loadingOverlay.classList.add('fade-out');
+      setTimeout(function () { loadingOverlay.remove(); }, 500);
+    }
+
     // ── Bootstrap ─────────────────────────────────────────────────────────────
-    Promise.all([
-      loadScript('https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js', 10000),
-      loadScript('https://cdn.jsdelivr.net/npm/@stomp/stompjs@7/bundles/stomp.umd.min.js', 10000),
-      initTurnstile()
-    ]).then(function () {
+    setLoadingProgress(5, 'Loading scripts...');
+    var sockjsPromise = loadScript('https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js', 10000)
+      .then(function () { setLoadingProgress(30, 'Loading scripts...'); });
+    var stompPromise = loadScript('https://cdn.jsdelivr.net/npm/@stomp/stompjs@7/bundles/stomp.umd.min.js', 10000)
+      .then(function () { setLoadingProgress(50, 'Loading scripts...'); });
+    var turnstilePromise = initTurnstile();
+
+    Promise.all([sockjsPromise, stompPromise, turnstilePromise]).then(function () {
+      setLoadingProgress(65, 'Connecting...');
       connectWebSocket();
       initIdentity();
     }).catch(function (err) {
       console.error('[BitBrush Widget] Failed to load dependencies:', err);
       statusText.textContent = 'failed to load';
+      dismissLoadingOverlay();
     });
   }
 
