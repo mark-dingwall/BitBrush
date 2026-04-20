@@ -13,17 +13,10 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 /**
  * Repository slice test for User entity persistence (IDEN-01, IDEN-02).
  *
- * Uses @DataJpaTest -- only the JPA layer is loaded (in-memory H2).
+ * <p>Uses @DataJpaTest — only the JPA layer is loaded (in-memory H2).
  * No controllers, no services, no WebSocket infrastructure.
- * Each test runs in a @Transactional context that auto-rolls back.
- *
- * Laravel equivalent: This is like testing an Eloquent model with RefreshDatabase,
- * except @DataJpaTest loads ONLY the database layer -- not the entire application.
- * In Laravel, even a simple model test boots middleware, routes, and service providers.
- * Spring's test slicing means this test runs in ~200ms, not ~2s.
- *   - @DataJpaTest = @RefreshDatabase but with surgical precision
- *   - @Transactional auto-rollback = RefreshDatabase's transaction wrapping
- *   - assertThat(saved.getUuid()) = $this->assertDatabaseHas('users', ['uuid' => ...])
+ * Each test runs in a @Transactional context that auto-rolls back,
+ * so tests don't bleed state.
  */
 @DataJpaTest
 @ActiveProfiles("test")
@@ -41,7 +34,6 @@ class UserRepositoryTest {
         userRepository.save(user);
 
         // Act: reload from the database by primary key
-        // Laravel: User::create([...]) + $this->assertDatabaseHas('users', [...])
         User reloaded = userRepository.findById("test-uuid").orElseThrow();
 
         // Assert: all fields persisted correctly
@@ -51,7 +43,6 @@ class UserRepositoryTest {
 
     @Test
     void findByIdReturnsEmptyForNonexistentUuid() {
-        // Laravel: User::find('nonexistent') returns null; JPA returns Optional.empty()
         assertThat(userRepository.findById("nonexistent")).isEmpty();
     }
 
@@ -68,9 +59,8 @@ class UserRepositoryTest {
         second.setUuid("uuid-second");
         second.setUsername("sharedname");
 
-        // Must use saveAndFlush() -- @DataJpaTest's @Transactional defers SQL until flush.
+        // Must use saveAndFlush() — @DataJpaTest's @Transactional defers SQL until flush.
         // Without explicit flush, the unique constraint is never checked before rollback.
-        // Laravel: RefreshDatabase also wraps in transactions, but Eloquent typically flushes immediately.
         assertThrows(DataIntegrityViolationException.class, () ->
                 userRepository.saveAndFlush(second));
     }

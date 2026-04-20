@@ -30,26 +30,24 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /**
  * Controller slice test for PixelController.
  *
- * @WebMvcTest loads ONLY the web layer: @Controller, @ControllerAdvice, MockMvc.
- * PixelService is mocked with @MockitoBean -- no database, no BankingService, no WebSocket.
+ * <p>@WebMvcTest loads ONLY the web layer: @Controller, @ControllerAdvice,
+ * MockMvc. PixelService is mocked with @MockitoBean — no database, no
+ * BankingService, no WebSocket.
  *
- * Laravel equivalent: Like a Laravel Feature test with $this->mock(PixelService::class),
- * except Spring's @WebMvcTest doesn't boot services at all -- they MUST be mocked.
- * In Laravel, Feature tests boot everything; here, @WebMvcTest boots ONLY controllers.
- *
- * Compare with PixelControllerTest.java (same package): that test uses @SpringBootTest
- * which boots the entire application including database, services, and WebSocket.
- * This test runs in ~200ms; PixelControllerTest runs in ~2s.
+ * <p>Compare with PixelControllerTest.java (same package): that test uses
+ * @SpringBootTest which boots the entire application including database,
+ * services, and WebSocket. This test runs in ~200ms; PixelControllerTest
+ * runs in ~2s.
  */
 @WebMvcTest(PixelController.class)
 @ActiveProfiles("test")
 class PixelControllerSliceTest {
 
     @Autowired
-    private MockMvc mockMvc;  // Laravel: $this->getJson(), $this->postJson()
+    private MockMvc mockMvc;
 
     @MockitoBean
-    private PixelService pixelService;  // Laravel: Mockery::mock() + $this->app->instance()
+    private PixelService pixelService;
 
     @MockitoBean
     private TurnstileService turnstileService;

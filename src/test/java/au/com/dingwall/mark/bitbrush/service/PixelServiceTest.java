@@ -35,39 +35,25 @@ import static org.mockito.Mockito.*;
 /**
  * Unit tests for PixelService business logic.
  *
- * Pure Mockito -- no Spring context loaded. Tests run in ~1ms each.
+ * <p>Pure Mockito — no Spring context loaded. Tests run in ~1ms each.
  * Follows the same pattern as BankingServiceTest: @ExtendWith(MockitoExtension.class)
  * with @Mock for all dependencies and manual constructor injection.
- *
- * Laravel equivalent: Like a Laravel PHPUnit unit test where you mock all
- * dependencies with Mockery and test the service class in isolation.
- *   - @Mock = Mockery::mock(PixelRepository::class)
- *   - @ExtendWith(MockitoExtension.class) = no equivalent; PHPUnit doesn't need this
- *   - when(...).thenReturn(...) = Mockery::mock()->shouldReceive()->andReturn()
- *   - verify(...) = Mockery::mock()->shouldHaveReceived()
- *   - Constructor injection = app()->make(PixelService::class) with mocked bindings
  */
-// Enables @Mock annotations without Spring context. Laravel has no equivalent -- PHPUnit discovers mocks automatically.
 @ExtendWith(MockitoExtension.class)
 class PixelServiceTest {
 
-    // Creates a Mockito mock. Laravel equivalent: Mockery::mock(PixelRepository::class)
     @Mock
     PixelRepository pixelRepository;
 
-    // Creates a Mockito mock. Laravel equivalent: Mockery::mock(UserRepository::class)
     @Mock
     UserRepository userRepository;
 
-    // Creates a Mockito mock. Laravel equivalent: Mockery::mock(SimpMessagingTemplate::class)
     @Mock
     SimpMessagingTemplate messagingTemplate;
 
-    // Creates a Mockito mock. Laravel equivalent: Mockery::mock(BankingService::class)
     @Mock
     BankingService bankingService;
 
-    // Creates a Mockito mock. Laravel equivalent: Mockery::mock(BitbrushProperties::class)
     @Mock
     BitbrushProperties bitbrushProperties;
 
@@ -79,13 +65,13 @@ class PixelServiceTest {
 
     private final List<String> palette = List.of("#000000", "#FF0000", "#00FF00");
 
-    // Captures the argument passed to a mock method for detailed assertions. Laravel: Mockery's withArgs()
+    // Captures the argument passed to a mock method for detailed assertions.
     @Captor
     ArgumentCaptor<List<Pixel>> pixelListCaptor;
 
     @BeforeEach
     void setUp() {
-        // Manual constructor injection -- Spring's DI makes this natural. Laravel: app()->instance(Dep::class, $mock)
+        // Manual constructor injection — Spring's DI makes this ergonomic in tests.
         pixelService = new PixelService(
                 pixelRepository, userRepository, palette,
                 bitbrushProperties, messagingTemplate, bankingService);
@@ -102,9 +88,7 @@ class PixelServiceTest {
                 List.of(new PixelCoordinate(5, 10)), 0, "uuid-1"));
 
         // Assert: pixel was persisted and broadcast fired
-        // Laravel: $this->mock(PixelRepository::class)->shouldReceive('saveAll')->once()
         verify(pixelRepository).saveAll(anyList());
-        // Verifies the mock was called. Laravel: $mock->shouldHaveReceived('convertAndSend')->once()
         verify(messagingTemplate).convertAndSend(eq("/topic/pixels"), any(PixelBroadcast.class));
     }
 
@@ -137,7 +121,6 @@ class PixelServiceTest {
         when(placement.earnRateSeconds()).thenReturn(3);
 
         // Act/Assert: InsufficientBalanceException thrown when deductPoints returns 0
-        // Laravel: throw_if($balance === 0, new InsufficientBalanceException(...))
         assertThrows(InsufficientBalanceException.class, () ->
                 pixelService.placePixels(new PixelPlacementRequest(
                         List.of(new PixelCoordinate(0, 0)), 0, "uuid-1")));
@@ -158,7 +141,6 @@ class PixelServiceTest {
                 0, "uuid-1"));
 
         // Assert: capture saveAll argument and verify only 2 pixels saved (not 3)
-        // Captures the argument passed to a mock method for detailed assertions. Laravel: Mockery's withArgs()
         verify(pixelRepository).saveAll(pixelListCaptor.capture());
         List<Pixel> savedPixels = pixelListCaptor.getValue();
         assertEquals(2, savedPixels.size(),
@@ -171,7 +153,6 @@ class PixelServiceTest {
         pixelService.registerUser(new UserRegistrationRequest("uuid-reg", "testuser"));
 
         // Assert: user saved to repository
-        // Laravel: $this->mock(UserRepository::class)->shouldReceive('save')->once()
         verify(userRepository).save(any(User.class));
     }
 

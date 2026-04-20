@@ -47,29 +47,29 @@ import static org.mockito.Mockito.when;
 /**
  * Integration tests for WebSocket/STOMP real-time collaboration (RTME-01, RTME-02).
  *
- * Uses @SpringBootTest with RANDOM_PORT -- a full application context is required
- * because WebSocket tests need the actual STOMP broker running, not a mock.
- * This is the one test type where @WebMvcTest cannot help -- WebSocket messaging
- * bypasses the MVC pipeline entirely.
+ * <p>Uses @SpringBootTest with RANDOM_PORT — a full application context is
+ * required because WebSocket tests need the actual STOMP broker running, not
+ * a mock. @WebMvcTest cannot help here: WebSocket messaging bypasses the MVC
+ * pipeline entirely.
  *
- * Laravel equivalent: Laravel has no equivalent. Laravel Broadcasting uses Pusher
- * (external SaaS) + Laravel Echo (JS client). Testing real-time in Laravel means
- * either mocking the event dispatch ($this->expectsEvents) or running a full
- * Pusher/Redis integration test. Spring's built-in STOMP broker means we can test
- * the full pub/sub flow in-process without any external service.
+ * <p>Async patterns used by the tests:
+ * <ul>
+ *   <li>CompletableFuture — resolves when a STOMP message arrives
+ *   <li>BlockingQueue — thread-safe message buffer for collecting multiple broadcasts
+ *   <li>Thread.sleep(200) — allows the STOMP subscription to propagate before
+ *       sending messages (subscriptions are async; sending immediately after
+ *       subscribe can lose the message)
+ *   <li>.get(5, SECONDS) — timeout prevents tests from hanging forever
+ * </ul>
  *
- * Key async patterns (no PHP equivalent):
- *   - CompletableFuture: like a JavaScript Promise -- resolves when STOMP message arrives
- *   - BlockingQueue: thread-safe message buffer for collecting multiple broadcasts
- *   - Thread.sleep(200): allows STOMP subscription to propagate before sending messages
- *     (subscriptions are async -- sending immediately after subscribe can lose the message)
- *   - .get(5, SECONDS): timeout prevents tests from hanging forever if message never arrives
- *
- * Test infrastructure:
- *   - SockJsClient + WebSocketTransport: connects via SockJS (same as browser client)
- *   - MappingJackson2MessageConverter: deserializes STOMP JSON payloads to Java records
- *   - StompSessionHandlerAdapter: minimal handler for connection lifecycle
- *   - StompFrameHandler: callback for incoming STOMP frames on subscribed topics
+ * <p>Test infrastructure:
+ * <ul>
+ *   <li>SockJsClient + WebSocketTransport — connects via SockJS (same transport
+ *       the browser uses)
+ *   <li>MappingJackson2MessageConverter — deserializes STOMP JSON payloads to Java records
+ *   <li>StompSessionHandlerAdapter — minimal handler for connection lifecycle
+ *   <li>StompFrameHandler — callback for incoming STOMP frames on subscribed topics
+ * </ul>
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
@@ -146,10 +146,8 @@ class WebSocketIntegrationTest {
     private final List<StompSession> openSessions = new ArrayList<>();
 
     /**
-     * Creates a connected StompSession via SockJS transport.
-     *
-     * Creates a real WebSocket connection via SockJS -- same transport the browser uses.
-     * Laravel: No equivalent. Laravel Echo connects to Pusher's servers, not to the app.
+     * Creates a connected StompSession via SockJS transport — the same transport
+     * the browser uses.
      */
     private StompSession connect() throws Exception {
         WebSocketStompClient stompClient = new WebSocketStompClient(
@@ -187,7 +185,6 @@ class WebSocketIntegrationTest {
 
     // WebSocket sessions are persistent (unlike HTTP request/response).
     // Must explicitly disconnect to avoid session leaks between tests.
-    // Laravel: No equivalent -- HTTP tests are stateless by nature.
     @BeforeEach
     void allowTurnstile() {
         when(turnstileService.verifyAndRemember(any(), any())).thenReturn(true);
@@ -235,10 +232,9 @@ class WebSocketIntegrationTest {
         // doesn't support custom CONNECT headers easily), so we initialize manually.
         bankingService.onUserConnect(userUuid, wsSession);
 
-        // CompletableFuture acts like a JavaScript Promise -- complete() resolves it.
+        // CompletableFuture acts like a JavaScript Promise — complete() resolves it.
         // The StompFrameHandler's handleFrame callback completes the future when a message arrives.
         // .get(5, SECONDS) blocks the test thread until the future resolves or times out.
-        // Laravel: Event::assertDispatched() checks synchronously; here we must wait for async delivery.
 
         // Given: a STOMP client connected and subscribed to /topic/pixels
         CompletableFuture<PixelBroadcast> received = new CompletableFuture<>();

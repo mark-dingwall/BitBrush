@@ -19,12 +19,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /**
  * Controller slice test for StatsController.
  *
- * @WebMvcTest loads ONLY StatsController. PixelService is mocked.
+ * <p>@WebMvcTest loads ONLY StatsController. PixelService is mocked.
  * Verifies the JSON response shape without running any JPQL aggregate queries.
- *
- * Laravel equivalent: Like testing a Laravel controller that calls
- * DB::raw('SELECT COUNT(*)...') -- but here the database layer is completely absent.
- * The test only verifies that the controller returns the service's response as JSON.
  */
 @WebMvcTest(StatsController.class)
 @ActiveProfiles("test")

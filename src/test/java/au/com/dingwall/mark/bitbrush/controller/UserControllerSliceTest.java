@@ -23,14 +23,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /**
  * Controller slice test for UserController.
  *
- * @WebMvcTest loads ONLY UserController. PixelService is mocked.
+ * <p>@WebMvcTest loads ONLY UserController. PixelService is mocked.
  * Tests HTTP validation behavior (@Valid on request body) and exception paths
  * without any database interaction.
  *
- * Key learning: @Valid annotation triggers Spring's MethodArgumentNotValidException
- * BEFORE the controller method body executes. The ResponseEntityExceptionHandler
- * (parent of GlobalExceptionHandler) converts this to a 400 ProblemDetail automatically.
- * In Laravel, FormRequest validation also runs before the controller -- same concept.
+ * <p>@Valid triggers Spring's MethodArgumentNotValidException BEFORE the
+ * controller method body executes. ResponseEntityExceptionHandler (parent of
+ * GlobalExceptionHandler) converts this to a 400 ProblemDetail automatically.
  */
 @WebMvcTest(UserController.class)
 @ActiveProfiles("test")
@@ -53,7 +52,6 @@ class UserControllerSliceTest {
 
     @Test
     void postUsers_validRequest_returns201() throws Exception {
-        // Laravel: $this->postJson('/api/users', [...])->assertStatus(201)
         doNothing().when(pixelService).registerUser(any());
 
         mockMvc.perform(post("/api/users")
@@ -66,7 +64,7 @@ class UserControllerSliceTest {
 
     @Test
     void postUsers_blankUsername_returns400() throws Exception {
-        // @NotBlank validation fires before controller body -- like Laravel FormRequest
+        // @NotBlank validation fires before the controller body; GlobalExceptionHandler returns 400 ProblemDetail.
         mockMvc.perform(post("/api/users")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""

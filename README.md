@@ -2,7 +2,7 @@
 
 A collaborative pixel art canvas where multiple users place colored pixels in real-time -- inspired by Reddit's r/Place.
 
-Built with Java Spring Boot as a learning project for a developer transitioning from Laravel to Spring Boot.
+A Java 21 + Spring Boot 3.5 application demonstrating real-time collaboration, WebSocket/STOMP messaging, and thread-safe in-memory state management.
 
 <!-- TODO: Add demo GIF/screenshot -->
 
@@ -83,31 +83,3 @@ Open [http://localhost:8080](http://localhost:8080). The dev profile uses a file
 ```
 
 The test suite includes unit tests (Mockito), controller slice tests (@WebMvcTest), repository slice tests (@DataJpaTest), integration tests (@SpringBootTest), and WebSocket tests (StompSession + CompletableFuture).
-
-<details>
-<summary>Laravel to Spring Boot Concept Map</summary>
-
-| Laravel | Spring Boot | Notes |
-|---------|-------------|-------|
-| `Eloquent Model` + `Migration` | `@Entity` + `spring.jpa.ddl-auto` | JPA annotations replace `$fillable`, `$casts`, migration files |
-| `Route::resource()` | `@RequestMapping` + `@GetMapping`/`@PostMapping` | Annotations on controller methods, not a routes file |
-| `Controller` | `@RestController` | Returns data directly (no view layer) |
-| `FormRequest` | `@Valid` + DTO validation annotations | `@NotBlank`, `@Min`, `@Max` on record fields |
-| `App\Exceptions\Handler` | `@RestControllerAdvice` | Catches exceptions globally, returns ProblemDetail (RFC 7807) |
-| `public/` | `src/main/resources/static/` | Spring Boot serves static files from classpath |
-| `Resource::toArray()` | Java `record` DTO | Immutable data carriers with automatic serialization |
-| `.env` | `application-{profile}.properties` | Spring profiles replace single .env file |
-| `config/*.php` | `@ConfigurationProperties` record | Type-safe, validated configuration binding |
-| `php artisan serve` | `./gradlew bootRun` | Embedded Tomcat (no separate web server needed) |
-| `php artisan test` | `./gradlew test` | JUnit 5 + Mockito + AssertJ |
-| `php artisan test --filter` | `./gradlew test --tests "*ClassName"` | Filter by class or method name |
-| `Log::info()` | SLF4J `log.info()` | Logging facade pattern (same concept, different API) |
-| `$this->getJson()` | `mockMvc.perform(get(...))` | MockMvc simulates HTTP without a real server |
-| `Mockery::mock()` | `@MockitoBean` / `@Mock` | `@MockitoBean` for Spring context, `@Mock` for pure unit tests |
-| `RefreshDatabase` trait | `@Transactional` / `@DataJpaTest` | Auto-rollback after each test |
-| Pusher + Laravel Echo | Built-in STOMP broker | No external service -- pub/sub runs inside the JVM |
-| Redis rate limiter / `ThrottleRequests` | `ConcurrentHashMap.compute()` | Thread-safe in-memory rate limiting (no external cache) |
-| `Laravel Sail` | `Docker Compose` | One-command development environment |
-| Middleware | `Filter` / `Interceptor` | Not used in this project, but the equivalent exists |
-
-</details>

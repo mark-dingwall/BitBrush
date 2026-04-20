@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A collaborative pixel art canvas (like Reddit r/Place) built with Java 21 + Spring Boot 3.5. Users place colored pixels on a shared 250x250 grid in real-time via WebSocket/STOMP. Placement is rate-limited by a banking system that earns points over time. The frontend is a single-page vanilla HTML/JS/CSS file (`src/main/resources/static/index.html`) — there is no frontend build step.
 
-This is a learning/portfolio project for a developer transitioning from Laravel to Spring Boot.
+BitBrush is a personal Spring Boot project maintained as a portfolio piece. When making changes, follow existing Spring idioms (constructor injection, records for DTOs/config, RFC 7807 ProblemDetail for errors, JPA entities with repository + service layering).
 
 ## Build & Run Commands
 

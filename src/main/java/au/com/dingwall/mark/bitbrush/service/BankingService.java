@@ -16,15 +16,18 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * Manages placement point banking for all connected users.
  *
- * Banking state is held entirely in memory — no database backing. Points reset on
- * server restart. This is intentional: the goal is to demonstrate JVM concurrency
- * primitives (ConcurrentHashMap.compute(), @Scheduled) that have no equivalent in
- * PHP's single-threaded-per-request model.
+ * <p>Banking state is held entirely in memory — no database backing. Points
+ * reset on server restart (intentional design choice; simpler than persisting
+ * a frequently-mutated per-user counter).
  *
- * Thread safety:
- * - bankMap: ConcurrentHashMap&lt;uuid, BankState&gt; — compute() used for all mutations
- * - uuidToSessionId: ConcurrentHashMap&lt;uuid, sessionId&gt; — tracks connected users
- *   (only connected UUIDs earn points; disconnect removes entry)
+ * <p>Thread safety:
+ * <ul>
+ *   <li>bankMap: ConcurrentHashMap&lt;uuid, BankState&gt; — compute() used for
+ *       all mutations so check-and-mutate is atomic.
+ *   <li>uuidToSessionId: ConcurrentHashMap&lt;uuid, sessionId&gt; — tracks
+ *       connected users; only connected UUIDs earn points. Disconnect removes
+ *       the entry so the @Scheduled earn task skips them.
+ * </ul>
  */
 @Service
 public class BankingService {
