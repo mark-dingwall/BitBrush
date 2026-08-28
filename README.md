@@ -2,7 +2,7 @@
 
 A collaborative pixel art canvas where multiple users place colored pixels in real-time -- inspired by Reddit's r/Place.
 
-A Java 21 + Spring Boot 3.5 application demonstrating real-time collaboration, WebSocket/STOMP messaging, persistent canvas state, and thread-safe in-memory placement banking.
+A Java 21 + Spring Boot 3.5 application with real-time collaboration, WebSocket/STOMP messaging, persistent canvas state, and thread-safe in-memory placement banking.
 
 Known follow-up work is tracked in the [project backlog](BACKLOG.md).
 
@@ -106,7 +106,7 @@ The Gradle test task also produces JaCoCo reports under `build/reports/jacoco/te
 
 ### Production Widget Smoke Tests
 
-The Playwright suite targets the live portfolio embed at `mark.dingwall.com.au` and the deployed backend at `bitbrush.fly.dev`. It requires Node.js, network access, and a Playwright browser install; it is separate from the local Gradle suite and interacts with the production deployment.
+The Playwright suite targets the live production embed at `mark.dingwall.com.au` and the deployed backend at `bitbrush.fly.dev`. It requires Node.js, network access, and a Playwright browser install; it is separate from the local Gradle suite and interacts with the production deployment.
 
 ```bash
 cd e2e

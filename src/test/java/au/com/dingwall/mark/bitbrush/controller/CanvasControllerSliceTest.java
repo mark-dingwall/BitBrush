@@ -24,7 +24,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * @WebMvcTest loads ONLY CanvasController and web infrastructure.
  * Both PixelService and CanvasExportService are mocked -- no database queries.
  *
- * Demonstrates mocking multiple service dependencies in a single slice test.
+ * Verifies controller behavior with multiple mocked service dependencies in a single slice test.
  * Compare with CanvasControllerTest.java: that test uses real repositories
  * and actual H2 queries; this test verifies HTTP behavior only.
  */

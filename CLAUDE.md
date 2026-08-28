@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A collaborative pixel art canvas (like Reddit r/Place) built with Java 21 + Spring Boot 3.5. Users place colored pixels on a shared 250x250 grid in real-time via WebSocket/STOMP. Placement is rate-limited by a banking system that earns points over time. The full-page client is a single vanilla HTML/JS/CSS file (`src/main/resources/static/index.html`); the independently embeddable client is `bitbrush-widget.js`. Neither client has an application build step.
 
-BitBrush is a personal Spring Boot project maintained as a portfolio piece. When making changes, follow existing Spring idioms (constructor injection, records for DTOs/config, RFC 7807 ProblemDetail for errors, JPA entities with repository + service layering).
+BitBrush is a production Spring Boot application. When making changes, follow existing Spring idioms (constructor injection, records for DTOs/config, RFC 7807 ProblemDetail for errors, JPA entities with repository + service layering).
 
 ## Build & Run Commands
 
@@ -24,7 +24,7 @@ npx playwright install chromium
 npx playwright test
 ```
 
-The dev profile (`application-dev.properties`) uses `ddl-auto=create` — schema is dropped and recreated on each startup. The H2 console is available at `/h2-console` in dev. `./gradlew test` also generates JaCoCo HTML and CSV reports under `build/reports/jacoco/test/`; there is no enforced coverage threshold. The Playwright suite is fixed to the deployed portfolio and backend, not a local E2E environment.
+The dev profile (`application-dev.properties`) uses `ddl-auto=create` — schema is dropped and recreated on each startup. The H2 console is available at `/h2-console` in dev. `./gradlew test` also generates JaCoCo HTML and CSV reports under `build/reports/jacoco/test/`; there is no enforced coverage threshold. The Playwright suite is fixed to the deployed production site and backend, not a local E2E environment.
 
 ## Architecture
 
@@ -93,7 +93,7 @@ The dev profile (`application-dev.properties`) uses `ddl-auto=create` — schema
 - **Integration tests**: `@SpringBootTest` for full context; read-oriented Canvas/Stats tests are transactional, while Pixel/User/error-handler tests deliberately are not
 - **WebSocket tests**: `WebSocketIntegrationTest` uses `StompSession` + `CompletableFuture` against a live server
 - **Repository tests**: `@DataJpaTest` with auto-rollback (e.g., `PixelRepositoryTest`, `UserRepositoryTest`)
-- **Production smoke tests**: Playwright exercises the deployed portfolio widget and Fly.io backend; it does not cover the full-page client or local runtime
+- **Production smoke tests**: Playwright exercises the deployed production-site widget and Fly.io backend; it does not cover the full-page client or local runtime
 
 Tests use the `test` profile (in-memory H2, `create-drop`).
 

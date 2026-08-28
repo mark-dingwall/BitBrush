@@ -43,7 +43,7 @@ async function setupAndNavigate(page: Page) {
   await expect(page.locator('.bbw-overlay')).toBeHidden({ timeout: 5000 });
 }
 
-test.describe('BitBrush Widget on Portfolio Site', () => {
+test.describe('BitBrush Widget on Production Site', () => {
 
   test('widget loads with all key elements', async ({ page }) => {
     await setupAndNavigate(page);
@@ -106,7 +106,7 @@ test.describe('BitBrush Widget on Portfolio Site', () => {
     await expect(overlay.locator('button')).toBeVisible();
   });
 
-  test('REST API CORS works from portfolio domain', async ({ page }) => {
+  test('REST API CORS works from production domain', async ({ page }) => {
     await page.goto('/', { waitUntil: 'load' });
 
     const getResult = await page.evaluate(async (server) => {
