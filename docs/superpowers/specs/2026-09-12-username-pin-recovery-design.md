@@ -93,7 +93,9 @@ Body:
 }
 ```
 
-The endpoint always represents creation. It enforces the identity-request body cap, requires the client-generated private ID to be a canonical UUID string, validates the request, requires Turnstile, rejects an existing username or a private UUID found in either identifier column, assigns a random public author ID from the syntactically disjoint `author_` plus base64url namespace, hashes the canonical PIN, commits the user, and only then marks the UUID verified. Public-ID generation retries on its database uniqueness constraint. Success returns `201 Created` with the authoritative identity and no PIN.
+The endpoint always represents creation. It enforces the identity-request body cap, requires the client-generated private ID to be a canonical UUID string, validates the request, requires Turnstile, rejects an existing username or a private UUID found in either identifier column, assigns a random public author ID from the syntactically disjoint `author_` plus base64url namespace, hashes the canonical PIN, commits the user, and only then marks the UUID verified. Success returns `201 Created` with the authoritative identity and no PIN.
+
+Creation names the database constraints for private UUID, username, and public author ID. A pre-check provides normal errors, while the constraints decide concurrent races. Only a violation of the named public-author-ID constraint triggers generation of another ID and a new `TransactionTemplate` attempt; the failed transaction is never reused. Named private-UUID and username violations map to `409`, and unrelated integrity failures propagate. Retries are bounded and only the successfully committed attempt is marked verified.
 
 Duplicate UUIDs or usernames return `409 Conflict`. Validation failures return Spring's RFC 7807 `400 Bad Request` response. Turnstile failure remains `403 Forbidden`.
 
@@ -186,11 +188,11 @@ This startup-only component is disabled unless `PIN_BACKFILL_EXPORT_PATH` is set
 
 ### `UserSessionService`
 
-This service is the single owner of WebSocket session lifecycle state. It coordinates session-ID registration and banking presence after synchronous CONNECT admission, so connect and disconnect callbacks cannot independently interleave those transitions.
+This service is the single owner of WebSocket session lifecycle state. It coordinates pending, admitted, active, and closed session states plus banking presence, so CONNECT validation, broker acknowledgement, and disconnect callbacks cannot independently interleave those transitions.
 
 ### Existing services
 
-`TurnstileService` remains the only Cloudflare integration and owner of the process-lifetime verified set. `UserIdentityService` makes creation and recovery call `verify(token)`, performs the database/credential operation, and calls `markVerified(uuid)` only after that operation succeeds. This ordering prevents a failed database write or failed credential check from leaving a UUID verified. HTTP reconnect calls `markVerified(uuid)` only after repository lookup succeeds; the inbound STOMP admission path likewise marks only after its separate synchronous lookup succeeds.
+`TurnstileService` remains the only Cloudflare integration and owner of the process-lifetime verified set. `UserIdentityService` makes creation and recovery call `verify(token)`, performs the database/credential operation, and calls `markVerified(uuid)` only after that operation succeeds. This ordering prevents a failed database write or failed credential check from leaving a UUID verified. HTTP reconnect calls `markVerified(uuid)` only after repository lookup succeeds; STOMP marks only when a synchronously admitted session is promoted by `SessionConnectedEvent`.
 
 The existing `verifyAndRemember` behavior is therefore decomposed into its existing `verify` and `markVerified` operations where transaction ordering matters rather than duplicated in a new Turnstile implementation.
 
@@ -198,11 +200,13 @@ The two static clients reuse their existing Turnstile rendering, wait, reset, an
 
 ### WebSocket lifecycle
 
-The inbound STOMP `ChannelInterceptor` is the admission boundary. On a CONNECT frame it synchronously validates the canonical private UUID with a side-effect-free repository lookup before returning the frame to the broker. Only a known UUID is assigned as `Principal`; in the same admitted-connect operation, `UserSessionService` registers the session, marks the UUID verified, and performs the first-active banking transition. An absent, malformed, unknown, or lookup-failing UUID rejects CONNECT, so the broker never sends CONNECTED or processes a SUBSCRIBE/SEND under it. The interceptor does not call the HTTP reconnect workflow.
+The inbound STOMP interceptor is the admission boundary. On a CONNECT frame it first records the session as pending, then synchronously validates the canonical private UUID with a side-effect-free repository lookup before returning the frame to the broker. A disconnect during lookup marks that pending entry closed, so a late successful lookup cannot admit it. Only a still-pending known UUID becomes admitted and is assigned as `Principal`. An absent, malformed, unknown, or lookup-failing UUID rejects CONNECT. The interceptor does not call the HTTP reconnect workflow.
 
-If downstream CONNECT processing fails after admission, the interceptor's completion callback invokes the same idempotent disconnect cleanup used by `SessionDisconnectEvent`. A normal disconnect removes only that session; when the last active session for the UUID leaves, banking stops earning. Duplicate cleanup and out-of-order transport callbacks are idempotent.
+Admission alone has no verification or banking side effects. `SessionConnectedEvent`, emitted only once the broker has produced CONNECTED, atomically promotes a still-admitted session to active, marks its UUID verified, and performs the first-active banking transition. Every inbound destination-bearing frame after CONNECT, including SUBSCRIBE and SEND, is rejected unless its session is active and its Principal matches the admitted private UUID. Thus pipelined frames, rejected connections, and merely admitted connections cannot invoke `/app` handlers or subscribe before activation.
 
-Connection tracking is session-aware for this feature's legitimate multi-device case. `UserSessionService` owns the session-to-UUID and per-UUID active-session sets; `BankingService` receives only first-active/last-active presence transitions, earns once per UUID, and broadcasts the same bank state to all sessions through the existing user destination. This replaces the documented one-session assumption without changing balance semantics.
+The interceptor also implements `ExecutorChannelInterceptor.afterMessageHandled` for CONNECT so an asynchronous downstream handler exception closes the pending/admitted entry. It does not rely on `ChannelInterceptor.afterSendCompletion`, which completes after work is queued rather than after asynchronous handlers run. `SessionDisconnectEvent` invokes the same idempotent cleanup. A normal disconnect removes only that session; when the last active session for the UUID leaves, banking stops earning. Duplicate, failure, timeout-cleanup, and out-of-order transport callbacks are idempotent. Pending/admitted entries have a short expiry as a final bound if neither broker acknowledgement nor cleanup arrives; expiry never affects an active session.
+
+Connection tracking is session-aware for this feature's legitimate multi-device case. `UserSessionService` owns the session-to-UUID and per-UUID active-session sets. `BankingService` stores active presence in the same per-UUID `compute`-owned state as balance; first-active, last-active, deduction, and earn-tick operations therefore linearize on that state. An earn tick checks active presence inside `compute`, earns once per UUID, and broadcasts the same bank state to all sessions through the existing user destination. If final disconnect linearizes first, that tick cannot award a point. This replaces the documented one-session assumption without changing balance semantics.
 
 Turnstile verification is admission state, not WebSocket-presence state. Once creation, recovery, HTTP reconnect, or an active validated STOMP connection marks a private UUID verified, it remains verified until process restart; disconnect no longer calls `removeVerified`. This is no weaker than the existing UUID reconnect contract, under which possession of a registered UUID immediately restores verification, and it removes a last-disconnect/new-authorization race. The verification set is bounded by the number of registered identities seen during one process lifetime. Session state alone controls whether banking earns.
 
@@ -331,7 +335,8 @@ Credential-concurrency tests prove that no more than the configured number of re
 
 - Successful creation persists only a hash, assigns a distinct public author ID, commits, and then marks the private UUID verified.
 - Duplicate private UUID and duplicate username behavior, including rejection when a requested private UUID equals a legacy public author ID.
-- Canonical private-UUID validation, disjoint new public-ID syntax, and public-ID collision retry.
+- Canonical private-UUID validation, disjoint new public-ID syntax, and a forced public-ID collision that retries in a fresh transaction.
+- Concurrent private-UUID and username constraint races return `409`; only the final successful public-ID attempt marks verification, and unrelated integrity violations are not misclassified.
 - Repository, flush, and commit-time failures do not mark a UUID verified.
 - Reconnect returns the authoritative username and never mutates it.
 - Unknown reconnect UUID.
@@ -352,7 +357,9 @@ Captured-log tests exercise create, reconnect, recover, failed reconnect, STOMP 
 
 Repository tests verify hash persistence, exact username lookup, private-UUID and public-author-ID uniqueness, and non-null enforcement. Full Spring tests execute create → reconnect and create → recover → place-pixel request sequences, proving the recovered private UUID works through the existing placement and verification path while public pixel payloads expose only the public author ID.
 
-WebSocket integration tests verify that identity resolution and first-active banking registration complete synchronously before STOMP activation. Unknown, malformed, and lookup-failing UUIDs receive no CONNECTED frame and cannot invoke `/app` destinations. The first `/app/bank` response after a valid reconnect reflects an existing non-starting balance, proving SUBSCRIBE cannot overtake admission. Two sessions with one recovered UUID prove that disconnecting either leaves the other earning and authorized until the final disconnect. Focused `UserSessionService` concurrency tests cover duplicate connect/cleanup callbacks and simultaneous first/last-session transitions; they assert idempotence and that two sessions earn only once per tick. An interceptor test forces downstream CONNECT failure and proves completion cleanup leaves no banking presence. A separate test confirms disconnect stops banking presence but deliberately leaves an already verified UUID verified until process restart.
+WebSocket integration tests verify synchronous identity admission followed by activation on broker acknowledgement. Unknown, malformed, and lookup-failing UUIDs receive no CONNECTED frame, and neither those sessions nor deliberately pipelined pre-activation frames can invoke `/app` destinations or subscribe. The first `/app/bank` response after a valid CONNECTED reflects an existing non-starting balance, proving SUBSCRIBE cannot overtake activation. Two sessions with one recovered UUID prove that disconnecting either leaves the other earning and authorized until the final disconnect.
+
+Focused `UserSessionService` concurrency tests use barriers to close a session during the synchronous lookup and assert that its late success cannot become admitted, verified, active, or banking-present. They also cover duplicate callbacks and simultaneous first/last-session transitions. Interceptor tests force an asynchronous downstream CONNECT-handler failure, expiry without acknowledgement, and principal/session mismatch; each leaves no verification or banking activation. A banking barrier test linearizes final disconnect before an earn tick and proves no point is awarded, while the opposite ordering awards at most the one legitimate point. A separate test confirms disconnect stops banking presence but deliberately leaves an already verified UUID verified until process restart.
 
 All existing tests that create users are updated deliberately: creation tests provide PINs; tests concerned only with registered users use service fixtures or the appropriate identity operation. This prevents permissive compatibility shortcuts from hiding missing credentials.
 
@@ -381,6 +388,8 @@ A PostgreSQL Testcontainers test starts from the V1 schema, inserts representati
 - An empty V1 database migrates and starts without an export path.
 - Re-running Flyway is idempotent and does not replace committed hashes.
 - The resulting schema passes Hibernate `validate` under the production database dialect.
+
+The migration/full-application test also treats one migrated legacy UUID-shaped `author_id` as an adversarial credential across every bearer path: reconnect returns the generic unknown-user `404` without verification, pixel placement fails without writing even when the normal verification boundary is otherwise satisfied, and STOMP sends no CONNECTED and creates no banking presence or `/app` invocation. Recovery with that row's derived PIN returns the rotated private UUID, and only that value then succeeds through reconnect, placement, and STOMP.
 
 The container test is marked to skip only when Docker is genuinely unavailable locally. CI includes an explicit migration-test task and fails if that task is skipped, ensuring GitHub Actions executes the PostgreSQL path. Unit tests still exercise migration/backfill collaborators without Docker.
 
