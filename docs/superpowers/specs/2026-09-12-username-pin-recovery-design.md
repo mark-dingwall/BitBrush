@@ -93,7 +93,7 @@ Body:
 }
 ```
 
-The endpoint always represents creation. It enforces the identity-request body cap, validates the request, requires Turnstile, rejects an existing private UUID or username, assigns a random public author ID, hashes the canonical PIN, commits the user, and only then marks the UUID verified. Success returns `201 Created` with the authoritative identity and no PIN.
+The endpoint always represents creation. It enforces the identity-request body cap, requires the client-generated private ID to be a canonical UUID string, validates the request, requires Turnstile, rejects an existing username or a private UUID found in either identifier column, assigns a random public author ID from the syntactically disjoint `author_` plus base64url namespace, hashes the canonical PIN, commits the user, and only then marks the UUID verified. Public-ID generation retries on its database uniqueness constraint. Success returns `201 Created` with the authoritative identity and no PIN.
 
 Duplicate UUIDs or usernames return `409 Conflict`. Validation failures return Spring's RFC 7807 `400 Bad Request` response. Turnstile failure remains `403 Forbidden`.
 
@@ -150,7 +150,7 @@ Rate-limited recovery returns `429 Too Many Requests` with `Retry-After`. Turnst
 
 ### Public authorship payloads
 
-`PixelInfoResponse` and `PixelBroadcast` replace public `authorUuid` fields with `authorId`. The client uses this opaque public value for tooltip/highlight cache invalidation exactly as it used the old field. Pixel placement still submits the private UUID, but `PixelService` resolves the user and persists/broadcasts that user's public author ID. The private UUID is never returned by public canvas or statistics endpoints.
+`PixelInfoResponse` and `PixelBroadcast` replace public `authorUuid` fields with `authorId`. The client uses this opaque public value for tooltip/highlight cache invalidation exactly as it used the old field. Pixel placement still submits the private UUID, but `PixelService` resolves the user and persists/broadcasts that user's public author ID. The private UUID is never returned by public canvas or statistics endpoints. Legacy public IDs remain UUID-shaped to preserve pixel history; new public IDs use `author_` followed by at least 128 bits of cryptographically random base64url data, so they cannot equal a canonical private UUID.
 
 ### Request-size boundary
 
@@ -186,11 +186,11 @@ This startup-only component is disabled unless `PIN_BACKFILL_EXPORT_PATH` is set
 
 ### `UserSessionService`
 
-This service is the single owner of WebSocket session lifecycle state. It coordinates session-ID registration, side-effect-free private-UUID validation, and banking presence so connect and disconnect callbacks cannot independently interleave those transitions.
+This service is the single owner of WebSocket session lifecycle state. It coordinates session-ID registration and banking presence after synchronous CONNECT admission, so connect and disconnect callbacks cannot independently interleave those transitions.
 
 ### Existing services
 
-`TurnstileService` remains the only Cloudflare integration and owner of the process-lifetime verified set. `UserIdentityService` makes creation and recovery call `verify(token)`, performs the database/credential operation, and calls `markVerified(uuid)` only after that operation succeeds. This ordering prevents a failed database write or failed credential check from leaving a UUID verified. HTTP reconnect calls `markVerified(uuid)` only after repository lookup succeeds; `UserSessionService` uses a separate side-effect-free lookup and marks only while promoting a still-pending session.
+`TurnstileService` remains the only Cloudflare integration and owner of the process-lifetime verified set. `UserIdentityService` makes creation and recovery call `verify(token)`, performs the database/credential operation, and calls `markVerified(uuid)` only after that operation succeeds. This ordering prevents a failed database write or failed credential check from leaving a UUID verified. HTTP reconnect calls `markVerified(uuid)` only after repository lookup succeeds; the inbound STOMP admission path likewise marks only after its separate synchronous lookup succeeds.
 
 The existing `verifyAndRemember` behavior is therefore decomposed into its existing `verify` and `markVerified` operations where transaction ordering matters rather than duplicated in a new Turnstile implementation.
 
@@ -198,9 +198,9 @@ The two static clients reuse their existing Turnstile rendering, wait, reset, an
 
 ### WebSocket lifecycle
 
-`WebSocketEventListener` delegates every connect and disconnect callback to `UserSessionService`; it does not mutate banking or verification state itself. A connect registers its session ID as pending before performing a side-effect-free private-UUID lookup. Successful resolution atomically promotes the session to active, marks the UUID verified, and registers UUID presence with `BankingService`. The lookup must not call the HTTP reconnect workflow or mutate verification on its own. An unknown UUID never becomes active.
+The inbound STOMP `ChannelInterceptor` is the admission boundary. On a CONNECT frame it synchronously validates the canonical private UUID with a side-effect-free repository lookup before returning the frame to the broker. Only a known UUID is assigned as `Principal`; in the same admitted-connect operation, `UserSessionService` registers the session, marks the UUID verified, and performs the first-active banking transition. An absent, malformed, unknown, or lookup-failing UUID rejects CONNECT, so the broker never sends CONNECTED or processes a SUBSCRIBE/SEND under it. The interceptor does not call the HTTP reconnect workflow.
 
-A disconnect atomically closes the session whether it is pending or active. If it arrives while identity lookup is in flight, the closed marker prevents the late lookup result from marking verification or activating a ghost session. If the session was active, only that session is removed; when the last active session for the UUID leaves, banking stops earning. Repeated and out-of-order events are idempotent, and closed pending entries are removed when their lookup completes.
+If downstream CONNECT processing fails after admission, the interceptor's completion callback invokes the same idempotent disconnect cleanup used by `SessionDisconnectEvent`. A normal disconnect removes only that session; when the last active session for the UUID leaves, banking stops earning. Duplicate cleanup and out-of-order transport callbacks are idempotent.
 
 Connection tracking is session-aware for this feature's legitimate multi-device case. `UserSessionService` owns the session-to-UUID and per-UUID active-session sets; `BankingService` receives only first-active/last-active presence transitions, earns once per UUID, and broadcasts the same bank state to all sessions through the existing user destination. This replaces the documented one-session assumption without changing balance semantics.
 
@@ -257,11 +257,11 @@ The counters are intentionally instance-local, matching BitBrush's current singl
 Flyway adds `users.author_id`, `pin_hash`, and `pin_backfilled`, and changes the pixel author column's name from `author_uuid` to `author_id`. Renaming the pixel column preserves its values and does not update or rewrite the append-only pixel log. A Java migration then:
 
 1. Copies each legacy user's old UUID to its public `author_id`, matching the unchanged author values already present on that user's pixels.
-2. Replaces each legacy user's `users.uuid` with a new cryptographically random private UUID. Previously exposed UUIDs are therefore no longer accepted by reconnect, STOMP, or pixel placement after deployment.
+2. Replaces each legacy user's `users.uuid` with a new cryptographically random canonical UUID, retrying if it appears in either the private-UUID or public-author-ID column. Previously exposed UUIDs are therefore no longer accepted by reconnect, STOMP, or pixel placement after deployment.
 3. Derives a stable pseudorandom four-digit PIN from HMAC-SHA-256 over the `bitbrush-legacy-pin-v1` domain prefix plus the stable public `author_id`, keyed by `PIN_PEPPER`. Rejection sampling maps the HMAC output uniformly into `0000`–`9999`.
 4. Hashes that derived PIN through the same runtime PIN credential pipeline, using a new Argon2 salt.
 5. Updates the row and marks `pin_backfilled=true`.
-6. Adds uniqueness and `NOT NULL` constraints for `author_id` and `pin_hash` after every legacy row is populated. New application-created users receive random, unique public author IDs and always store `pin_backfilled=false`.
+6. Adds uniqueness and `NOT NULL` constraints for `author_id` and `pin_hash` after every legacy row is populated. New application-created users receive unique `author_…` public IDs and always store `pin_backfilled=false`.
 
 The deterministic derivation is used only for legacy backfill; user-selected PINs are never derivable. It makes the legacy plaintext mapping reproducible without storing it in PostgreSQL and makes migration retry safe even though Argon2 salts and encoded hashes can change after a rolled-back attempt. The stable `author_id`, rather than the rotated private UUID, is the derivation input so the runner can reproduce the PIN without retaining the old credential separately.
 
@@ -330,7 +330,8 @@ Credential-concurrency tests prove that no more than the configured number of re
 `UserIdentityService` tests cover:
 
 - Successful creation persists only a hash, assigns a distinct public author ID, commits, and then marks the private UUID verified.
-- Duplicate UUID and duplicate username behavior.
+- Duplicate private UUID and duplicate username behavior, including rejection when a requested private UUID equals a legacy public author ID.
+- Canonical private-UUID validation, disjoint new public-ID syntax, and public-ID collision retry.
 - Repository, flush, and commit-time failures do not mark a UUID verified.
 - Reconnect returns the authoritative username and never mutates it.
 - Unknown reconnect UUID.
@@ -351,7 +352,7 @@ Captured-log tests exercise create, reconnect, recover, failed reconnect, STOMP 
 
 Repository tests verify hash persistence, exact username lookup, private-UUID and public-author-ID uniqueness, and non-null enforcement. Full Spring tests execute create → reconnect and create → recover → place-pixel request sequences, proving the recovered private UUID works through the existing placement and verification path while public pixel payloads expose only the public author ID.
 
-WebSocket integration tests require identity resolution before initial STOMP activation, verify automatic reconnect restores placement authorization, and open two sessions with one recovered UUID to prove that disconnecting either session leaves the other earning and authorized until the final session disconnects. Focused `UserSessionService` concurrency tests use barriers around its side-effect-free identity resolution to deterministically exercise disconnect-before-resolution, duplicate callbacks, and lookup failure. They assert that a late successful lookup neither marks verification nor creates banking presence after its pending session closed, and that two sessions still earn only once per tick. A separate test confirms disconnect stops banking presence but deliberately leaves an already verified UUID verified until process restart.
+WebSocket integration tests verify that identity resolution and first-active banking registration complete synchronously before STOMP activation. Unknown, malformed, and lookup-failing UUIDs receive no CONNECTED frame and cannot invoke `/app` destinations. The first `/app/bank` response after a valid reconnect reflects an existing non-starting balance, proving SUBSCRIBE cannot overtake admission. Two sessions with one recovered UUID prove that disconnecting either leaves the other earning and authorized until the final disconnect. Focused `UserSessionService` concurrency tests cover duplicate connect/cleanup callbacks and simultaneous first/last-session transitions; they assert idempotence and that two sessions earn only once per tick. An interceptor test forces downstream CONNECT failure and proves completion cleanup leaves no banking presence. A separate test confirms disconnect stops banking presence but deliberately leaves an already verified UUID verified until process restart.
 
 All existing tests that create users are updated deliberately: creation tests provide PINs; tests concerned only with registered users use service fixtures or the appropriate identity operation. This prevents permissive compatibility shortcuts from hiding missing credentials.
 
@@ -362,6 +363,7 @@ A PostgreSQL Testcontainers test starts from the V1 schema, inserts representati
 - Every legacy row has a non-null, distinct, valid Argon2id hash.
 - Every legacy row has `pin_backfilled=true`; newly created rows have `pin_backfilled=false`.
 - Each old public UUID is retained as `author_id`, each private `users.uuid` is rotated, and old UUIDs no longer authenticate.
+- Creation rejects a private UUID equal to any legacy `author_id`; new `author_…` IDs cannot parse as private UUIDs, and generated-ID database collisions are retried.
 - Existing pixel rows are not rewritten and still resolve through their renamed `author_id` to the correct username.
 - Each deterministically derived PIN verifies for its matching row with the configured pepper.
 - Derived legacy PINs are stable four-digit decimal values produced without modulo bias and change when the author ID, domain prefix, or pepper changes.
