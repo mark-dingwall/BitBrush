@@ -2,14 +2,15 @@
 
 ## Summary
 
-BitBrush will require each new user to choose a case-sensitive, four-character PIN when creating a username. If the browser's BitBrush identity is later removed from `localStorage`, the user can recover the original UUID by submitting the username and PIN. Routine reconnects continue to use the locally stored UUID and do not store or resend the PIN.
+BitBrush will require each new user to choose a case-sensitive, four-character PIN when creating a username. If the browser's BitBrush identity is later removed from `localStorage`, the user can recover the private UUID by submitting the username and PIN. Routine reconnects continue to use the locally stored private UUID and do not store or resend the PIN. Public canvas payloads use a separate author ID so the bearer UUID is not disclosed.
 
 The PIN is a lightweight recovery credential for this anonymous canvas, not a replacement for the application's UUID-based identity model. The implementation will nevertheless protect it with canonical Unicode handling, a secret pepper, per-user salts, Argon2id, Turnstile, throttling, generic failures, and careful secret handling.
 
 ## Goals
 
-- Let a user recover the original UUID associated with a username after losing local browser state.
-- Preserve pixel authorship and any live in-memory banking state by restoring the original UUID.
+- Let a user recover the private UUID associated with a username after losing local browser state.
+- Preserve pixel authorship and, for post-migration identities, any live in-memory banking state by restoring the same private UUID.
+- Separate the private bearer UUID from the public author identifier exposed by canvas APIs.
 - Avoid persistent plaintext PIN storage on either the server or client, except for the explicitly requested operator export.
 - Support case-sensitive Unicode PINs through one server-authoritative canonicalization implementation.
 - Backfill every existing user with a non-null hashed PIN and produce a one-time protected export of the generated PINs.
@@ -27,9 +28,9 @@ The PIN is a lightweight recovery credential for this anonymous canvas, not a re
 
 ## Existing behavior
 
-Both clients store a generated UUID and username in `localStorage`. At startup they silently submit both values to `POST /api/users`. The endpoint treats an unknown UUID as registration and an existing UUID as reconnection. Existing UUIDs bypass a new Turnstile check and are re-added to the in-memory verified set. The UUID is also used as the STOMP principal and pixel author identifier.
+Both clients store a generated UUID and username in `localStorage`. At startup they silently submit both values to `POST /api/users`. The endpoint treats an unknown UUID as registration and an existing UUID as reconnection. Existing UUIDs bypass a new Turnstile check and are re-added to the in-memory verified set. The same UUID is used as the STOMP principal, pixel-placement credential, database user key, persisted pixel author key, and public author identifier.
 
-There is no PIN, recovery operation, identity lookup, cookie, durable session, or bearer token other than possession of the UUID. Losing local storage therefore loses access to the original identity.
+There is no PIN, recovery operation, identity lookup, cookie, durable session, or bearer token other than possession of the UUID. Losing local storage therefore loses access to the original identity. Pixel-info and broadcast responses publicly expose that UUID, so existing UUID values cannot safely remain bearer credentials after PIN recovery is introduced.
 
 ## User experience
 
@@ -56,7 +57,7 @@ The recovery view contains:
 - A primary **Log in** button.
 - A smaller **Need an account? Create one** action.
 
-Successful recovery stores the original UUID and authoritative username, closes the modal, and then starts WebSocket initialization. Failures leave the form open and clear the PIN.
+Successful recovery stores the account's current private UUID and authoritative username, closes the modal, and then starts WebSocket initialization. Failures leave the form open and clear the PIN.
 
 PIN fields use password masking and appropriate `autocomplete` values. They do not use HTML `maxlength=4`, because HTML counts UTF-16 code units and would reject some valid four-code-point PINs. The clients treat PINs as opaque strings and render server validation errors; they do not duplicate the Unicode security rules.
 
@@ -92,7 +93,7 @@ Body:
 }
 ```
 
-The endpoint always represents creation. It validates the request, requires Turnstile, rejects an existing UUID or username, hashes the canonical PIN, inserts the user, and marks the UUID verified. Success returns `201 Created` with no PIN in the response.
+The endpoint always represents creation. It enforces the identity-request body cap, validates the request, requires Turnstile, rejects an existing private UUID or username, assigns a random public author ID, hashes the canonical PIN, commits the user, and only then marks the UUID verified. Success returns `201 Created` with the authoritative identity and no PIN.
 
 Duplicate UUIDs or usernames return `409 Conflict`. Validation failures return Spring's RFC 7807 `400 Bad Request` response. Turnstile failure remains `403 Forbidden`.
 
@@ -145,7 +146,15 @@ An unknown username and an incorrect PIN both return the same `401 Unauthorized`
 
 Username matching remains exact and case-sensitive, preserving the current database semantics in which differently cased usernames can be distinct.
 
-Rate-limited recovery returns `429 Too Many Requests` with `Retry-After`. Turnstile failure remains `403 Forbidden`. The response and logs never contain the submitted PIN.
+Rate-limited recovery returns `429 Too Many Requests` with `Retry-After`. Turnstile failure remains `403 Forbidden`. All create, reconnect, and recovery responses containing a private UUID include `Cache-Control: no-store`. Responses and logs never contain the submitted PIN.
+
+### Public authorship payloads
+
+`PixelInfoResponse` and `PixelBroadcast` replace public `authorUuid` fields with `authorId`. The client uses this opaque public value for tooltip/highlight cache invalidation exactly as it used the old field. Pixel placement still submits the private UUID, but `PixelService` resolves the user and persists/broadcasts that user's public author ID. The private UUID is never returned by public canvas or statistics endpoints.
+
+### Request-size boundary
+
+A small `OncePerRequestFilter` applies only to the three identity POST endpoints and rejects request bodies larger than 4 KiB with an RFC 7807 `413 Content Too Large` response before JSON deserialization, Turnstile, or Argon2. It rejects an excessive `Content-Length` immediately and wraps unknown-length/chunked input in a counting stream that stops reading as soon as the same limit is crossed. DTO field limits remain as defense in depth and provide normal `400` validation errors for small malformed requests.
 
 ## Component boundaries
 
@@ -157,7 +166,7 @@ The controller exposes the three identity operations, resolves HTTP request meta
 
 This service is the single orchestration owner for creation, UUID reconnection, username recovery, Turnstile calls, throttling, repository coordination, and verification-cache updates. Its create/recover methods receive the token and, for recovery, the resolved source IP. User-registration behavior moves out of `PixelService`, returning that class to canvas and pixel responsibilities.
 
-The service never accepts or returns a raw PIN beyond the duration of a create or recover call. It never logs one.
+The service never accepts or returns a raw PIN beyond the duration of a create or recover call. It never logs one. Creation uses a short explicit `TransactionTemplate` operation that saves and flushes the complete user row; only after that operation returns, and therefore after commit succeeds, does it call `markVerified`. The service itself is not wrapped in a broader transaction that could defer the commit past that call.
 
 ### `PinCredentialService`
 
@@ -175,6 +184,10 @@ In production, the resolver obtains the public caller from Fly's `Fly-Client-IP`
 
 This startup-only component is disabled unless `PIN_BACKFILL_EXPORT_PATH` is set. It runs after Flyway has committed, reproduces only credentials marked `pin_backfilled=true`, writes the protected export, and then exits. Keeping export I/O outside the migration is required for database/filesystem failure recovery.
 
+### `UserSessionService`
+
+This service is the single owner of WebSocket identity lifecycle state. It coordinates session-ID registration, private-UUID validation, banking presence, and UUID-wide Turnstile verification so connect and disconnect callbacks cannot independently interleave those transitions.
+
 ### Existing services
 
 `TurnstileService` remains the only Cloudflare integration. `UserIdentityService` makes creation and recovery call `verify(token)`, performs the database/credential operation, and calls `markVerified(uuid)` only after that operation succeeds. This ordering prevents a failed database write or failed credential check from leaving a UUID verified. Reconnect calls `markVerified(uuid)` only after repository lookup succeeds.
@@ -185,9 +198,11 @@ The two static clients reuse their existing Turnstile rendering, wait, reset, an
 
 ### WebSocket lifecycle
 
-`WebSocketEventListener` resolves the UUID through `UserIdentityService` on every STOMP connection, including automatic reconnects, before registering it with `BankingService`. A known UUID is thereby re-added to the verified cache after a transport interruption; an unknown UUID is not registered for banking.
+`WebSocketEventListener` delegates every connect and disconnect callback to `UserSessionService`; it does not mutate banking or verification state itself. A connect registers its session ID as pending before resolving the private UUID through `UserIdentityService`. Successful resolution atomically promotes the session to active, marks the UUID verified, and registers UUID presence with `BankingService`. An unknown UUID never becomes active.
 
-Connection tracking becomes session-aware for this feature's legitimate multi-device case. `BankingService` tracks a set of session IDs per UUID plus the reverse session-to-UUID mapping. It earns once per UUID and broadcasts the same bank state to all sessions. Disconnect removes only that session; it reports when the last session has gone, and only then does `WebSocketEventListener` clear UUID-wide Turnstile verification. This replaces the documented one-session assumption without changing balance semantics.
+A disconnect atomically closes the session whether it is pending or active. If it arrives while identity lookup is in flight, the closed marker prevents the late lookup result from activating a ghost session. If the session was active, only that session is removed; when the last active session for the UUID leaves, banking stops earning and UUID-wide Turnstile verification is cleared. Repeated and out-of-order events are idempotent, and closed pending entries are removed when their lookup completes.
+
+Connection tracking is session-aware for this feature's legitimate multi-device case. `UserSessionService` owns the session-to-UUID and per-UUID active-session sets; `BankingService` receives only first-active/last-active presence transitions, earns once per UUID, and broadcasts the same bank state to all sessions through the existing user destination. This replaces the documented one-session assumption without changing balance semantics.
 
 ## PIN canonicalization
 
@@ -237,19 +252,24 @@ The counters are intentionally instance-local, matching BitBrush's current singl
 
 ## Database migration and legacy users
 
-Flyway adds required `pin_hash` and `pin_backfilled` columns. A Java migration then:
+Flyway adds `users.author_id`, `pin_hash`, and `pin_backfilled`, and changes the pixel author column's name from `author_uuid` to `author_id`. Renaming the pixel column preserves its values and does not update or rewrite the append-only pixel log. A Java migration then:
 
-1. Detects legacy rows without a hash.
-2. Derives a stable pseudorandom four-digit PIN from HMAC-SHA-256 over the `bitbrush-legacy-pin-v1` domain prefix plus UUID, keyed by `PIN_PEPPER`. Rejection sampling maps the HMAC output uniformly into `0000`–`9999`.
-3. Hashes that derived PIN through the same runtime PIN credential pipeline, using a new Argon2 salt.
-4. Updates the row and marks `pin_backfilled=true`.
-5. Applies `NOT NULL` constraints after all legacy rows are populated. New application-created users always store `pin_backfilled=false`.
+1. Copies each legacy user's old UUID to its public `author_id`, matching the unchanged author values already present on that user's pixels.
+2. Replaces each legacy user's `users.uuid` with a new cryptographically random private UUID. Previously exposed UUIDs are therefore no longer accepted by reconnect, STOMP, or pixel placement after deployment.
+3. Derives a stable pseudorandom four-digit PIN from HMAC-SHA-256 over the `bitbrush-legacy-pin-v1` domain prefix plus the stable public `author_id`, keyed by `PIN_PEPPER`. Rejection sampling maps the HMAC output uniformly into `0000`–`9999`.
+4. Hashes that derived PIN through the same runtime PIN credential pipeline, using a new Argon2 salt.
+5. Updates the row and marks `pin_backfilled=true`.
+6. Adds uniqueness and `NOT NULL` constraints for `author_id` and `pin_hash` after every legacy row is populated. New application-created users receive random, unique public author IDs and always store `pin_backfilled=false`.
 
-The deterministic derivation is used only for legacy backfill; user-selected PINs are never derivable. It makes the legacy plaintext mapping reproducible without storing it in PostgreSQL and makes migration retry safe even though Argon2 salts and encoded hashes can change after a rolled-back attempt.
+The deterministic derivation is used only for legacy backfill; user-selected PINs are never derivable. It makes the legacy plaintext mapping reproducible without storing it in PostgreSQL and makes migration retry safe even though Argon2 salts and encoded hashes can change after a rolled-back attempt. The stable `author_id`, rather than the rotated private UUID, is the derivation input so the runner can reproduce the PIN without retaining the old credential separately.
 
-No filesystem publication occurs inside the Flyway transaction. After Flyway commits, a small `LegacyPinExportRunner` runs during application startup only when `PIN_BACKFILL_EXPORT_PATH` is configured. It queries `pin_backfilled=true` users, reproduces their PINs, writes `username<TAB>PIN` to a new temporary file with owner-only `0600` permissions, flushes it, and atomically moves it to the configured path without overwriting. It logs only the path, row count, and Fly machine identifier.
+Rotating legacy UUIDs is an intentional one-time compatibility break required because current public APIs have disclosed them. Existing browser storage becomes stale and opens the identity modal; the user logs in with the operator-delivered backfill PIN and receives the new private UUID. The username and all historical authorship remain unchanged. A deployment restart already clears the in-memory bank, so no additional durable balance is lost.
 
-If startup or the machine fails before the export is retrieved, the operator can remove any incomplete target and restart with the same path; the runner reproduces the same username/PIN mapping from durable UUIDs and the backed-up pepper. The ephemeral file is therefore a delivery copy, not the only copy. A fresh database has no `pin_backfilled=true` rows and produces no export.
+No filesystem publication occurs inside the Flyway transaction. After Flyway commits, a small `LegacyPinExportRunner` runs during application startup only when `PIN_BACKFILL_EXPORT_PATH` is configured. It queries `pin_backfilled=true` users, reproduces their PINs from `author_id`, and builds the complete expected `username<TAB>PIN` byte sequence in deterministic username order. Usernames containing tab, CR, or LF are rejected by existing validation and are checked again before export.
+
+If the target does not exist, the runner removes only its own recognizable stale sibling temporary file, creates a fresh temporary file with `CREATE_NEW` and owner-only `0600` permissions, writes and fsyncs it, and atomically moves it to the configured target without replacement. On failure it removes its temporary artifact and fails startup. If the target already exists, the runner requires it to be a regular non-symlink file with `0600` permissions and byte-for-byte identical expected content; a valid prior export is accepted, while any mismatch or unsafe file fails startup without overwrite. It logs only the path, row count, and Fly machine identifier.
+
+If startup or the machine fails before the export is retrieved, the operator can restart with the same pepper and path; the runner reproduces the same username/PIN mapping from durable public author IDs. The ephemeral file is therefore a delivery copy, not the only copy. A fresh database has no `pin_backfilled=true` rows and produces no export.
 
 On Fly.io the configured path should be under `/tmp`, for example `/tmp/bitbrush-pin-backfill.tsv`. The operator retrieves it over SSH and deletes it promptly. Fly's ephemeral filesystem is not treated as a durable backup.
 
@@ -265,7 +285,7 @@ New domain exceptions are handled centrally as RFC 7807 problems, following exis
 - Unknown reconnect UUID: existing `404 User Not Found` response.
 - Invalid request or canonical PIN: `400 Bad Request`.
 
-Recovery responses use `Cache-Control: no-store`. Controller and service logging includes neither PINs nor hashes. Username logging is limited to what is operationally necessary, and failures do not distinguish account existence. The temporary post-migration export is the only plaintext-at-rest exception, is explicitly requested, is reproducible, has restrictive permissions, and is operator-deleted after retrieval.
+Every identity response containing a private UUID uses `Cache-Control: no-store`. Controller and service logging includes neither PINs nor hashes. Username logging is limited to what is operationally necessary, and failures do not distinguish account existence. The temporary post-migration export is the only plaintext-at-rest exception, is explicitly requested, is reproducible, has restrictive permissions, and is operator-deleted after retrieval.
 
 ## Testing strategy
 
@@ -305,27 +325,27 @@ Credential-concurrency tests prove that no more than the configured number of re
 
 `UserIdentityService` tests cover:
 
-- Successful creation persists only a hash and marks the UUID verified.
+- Successful creation persists only a hash, assigns a distinct public author ID, commits, and then marks the private UUID verified.
 - Duplicate UUID and duplicate username behavior.
-- Repository failure does not mark a UUID verified.
+- Repository, flush, and commit-time failures do not mark a UUID verified.
 - Reconnect returns the authoritative username and never mutates it.
 - Unknown reconnect UUID.
-- Recovery returns the original UUID and resets only the appropriate account counter.
+- Recovery returns the associated private UUID and resets only the appropriate account counter.
 - Incorrect PIN, unknown username, and dummy-hash execution.
 - Turnstile/credential failure never marks a UUID verified.
 - Security steps occur in the documented order within the single service-owned workflow.
-- Existing pixel authorship remains attached to the recovered UUID.
+- Pixel placement translates a private UUID to its public author ID; public responses never contain the private UUID.
 - Concurrent creation retains database uniqueness guarantees.
 
 ### Controller slice tests
 
-MockMvc slice tests cover all three contracts, missing/malformed bodies, Unicode JSON, source-IP resolution, delegation to the single service-owned workflow, every expected status, generic problem details, `Retry-After`, `Cache-Control: no-store`, and absence of PIN/hash response fields.
+MockMvc slice tests cover all three contracts, missing/malformed bodies, Unicode JSON, source-IP resolution, delegation to the single service-owned workflow, every expected status, generic problem details, `Retry-After`, `Cache-Control: no-store`, and absence of PIN/hash response fields. Filter tests prove both declared `Content-Length` and chunked/unknown-length bodies stop at 4 KiB with `413` before controller, Turnstile, or credential work, while an exact-limit body reaches normal validation.
 
 ### Repository and application integration tests
 
-Repository tests verify hash persistence, exact username lookup, uniqueness, and non-null enforcement. Full Spring tests execute create → reconnect and create → recover → place-pixel request sequences, proving the recovered UUID works through the existing placement and verification path.
+Repository tests verify hash persistence, exact username lookup, private-UUID and public-author-ID uniqueness, and non-null enforcement. Full Spring tests execute create → reconnect and create → recover → place-pixel request sequences, proving the recovered private UUID works through the existing placement and verification path while public pixel payloads expose only the public author ID.
 
-WebSocket integration tests require identity resolution before initial STOMP activation, verify automatic reconnect restores placement authorization, and open two sessions with one recovered UUID to prove that disconnecting either session leaves the other earning and authorized until the final session disconnects.
+WebSocket integration tests require identity resolution before initial STOMP activation, verify automatic reconnect restores placement authorization, and open two sessions with one recovered UUID to prove that disconnecting either session leaves the other earning and authorized until the final session disconnects. Focused `UserSessionService` concurrency tests use barriers around identity resolution to deterministically exercise disconnect-before-resolution, connect-during-last-disconnect, duplicate callbacks, and lookup failure. They assert there are no ghost sessions, verification is not cleared under a new active session, and two sessions still earn only once per tick.
 
 All existing tests that create users are updated deliberately: creation tests provide PINs; tests concerned only with registered users use service fixtures or the appropriate identity operation. This prevents permissive compatibility shortcuts from hiding missing credentials.
 
@@ -334,13 +354,19 @@ All existing tests that create users are updated deliberately: creation tests pr
 A PostgreSQL Testcontainers test starts from the V1 schema, inserts representative legacy users, and runs the real Flyway migration. It verifies:
 
 - Every legacy row has a non-null, distinct, valid Argon2id hash.
+- Every legacy row has `pin_backfilled=true`; newly created rows have `pin_backfilled=false`.
+- Each old public UUID is retained as `author_id`, each private `users.uuid` is rotated, and old UUIDs no longer authenticate.
+- Existing pixel rows are not rewritten and still resolve through their renamed `author_id` to the correct username.
 - Each deterministically derived PIN verifies for its matching row with the configured pepper.
-- Derived legacy PINs are stable four-digit decimal values produced without modulo bias and change when the UUID, domain prefix, or pepper changes.
+- Derived legacy PINs are stable four-digit decimal values produced without modulo bias and change when the author ID, domain prefix, or pepper changes.
+- The final database enforces `NOT NULL` for private UUIDs, public author IDs, and PIN hashes, plus uniqueness for both identifiers, with direct failing inserts rather than relying only on Hibernate metadata.
 - The TSV escapes/represents every currently valid username safely.
+- The TSV contains exactly the `pin_backfilled=true` usernames once each and no newly created user.
 - The export has `0600` permissions on supported test hosts.
 - PINs and pepper do not appear in Flyway/application logs captured by the test.
 - Flyway performs no filesystem writes before its transaction commits.
-- Post-commit export does not overwrite an existing file and rejects unwritable paths.
+- Post-commit export accepts an existing byte-identical `0600` regular file, rejects mismatched content, symlinks, unsafe permissions, and unwritable paths, and never overwrites them.
+- Interrupted writes clean up only the runner-owned sibling temporary artifact; a stale such artifact is safely replaced on retry.
 - Export failure leaves committed hashes intact and can reproduce the identical PIN mapping on a later startup.
 - Deleting an ephemeral export and rerunning the exporter reproduces identical content.
 - An empty V1 database migrates and starts without an export path.
@@ -356,6 +382,7 @@ Because the static clients intentionally have no application build step, verific
 - JavaScript syntax checks.
 - A separate local Playwright configuration that serves the static resources, substitutes deterministic Turnstile/API boundaries, and tests the full-page client and standalone widget before deployment.
 - Automated browser coverage for create/recover mode switching, opaque Unicode field submission, server-side confirmation/validation error rendering, identity-before-STOMP ordering, stale UUID handling, and the exact local-storage keys and values retained after success.
+- Canvas-response tests assert the clients use public `authorId` for cache invalidation and never receive or render the private UUID.
 - Local browser smoke tests for create, mode switching, confirmation mismatch, Unicode PIN feedback, recovery, stale UUID handling, storage contents, Turnstile refresh, and both full-page and widget clients.
 - Production Playwright setup reads a provisioned `BITBRUSH_E2E_UUID` secret, stores only that UUID, and lets `/api/users/reconnect` supply the authoritative username. It fails fast when the secret is absent and never embeds a PIN or reusable UUID in source control.
 
@@ -374,15 +401,16 @@ Before the first production deployment:
 
 1. Generate and securely store `PIN_PEPPER`.
 2. Configure `PIN_BACKFILL_EXPORT_PATH` to a new `/tmp` path.
-3. Provision `BITBRUSH_E2E_UUID` as a CI/operator secret for a dedicated existing smoke-test identity.
+3. Prepare to provision `BITBRUSH_E2E_UUID` after deployment with the rotated private UUID for a dedicated smoke-test identity; the currently exposed UUID cannot be reused.
 4. Confirm there is a current PostgreSQL backup.
 5. Deploy with Fly's `immediate` strategy, accepting a brief maintenance window so no old application instance can insert a row after the new non-null schema is applied.
 6. Monitor Flyway, the post-commit export runner, and health-check output.
 7. Retrieve the backfill export from the machine named in the runner log. If that machine disappears first, restart with the same pepper and export path to reproduce it.
-8. Verify selected exported PINs against recovery without exposing them in shell history.
-9. Delete the remote temporary export.
-10. Exercise create, reconnect, recover, incorrect-PIN, hash-capacity, multi-session, and throttle behavior.
-11. Run the production widget smoke suite with the provisioned UUID.
+8. Verify selected exported PINs against recovery without exposing them in shell history, and capture the recovered private UUID for the dedicated smoke-test identity.
+9. Store that private UUID as `BITBRUSH_E2E_UUID` through the existing CI/operator secret mechanism.
+10. Unset `PIN_BACKFILL_EXPORT_PATH` before deleting the remote file, so a later restart cannot recreate plaintext. Apply the configuration restart, then remove or confirm loss of the target and runner-owned temporary sibling on any surviving machine.
+11. Exercise create, reconnect, recover, incorrect-PIN, hash-capacity, multi-session, and throttle behavior.
+12. Run the production widget smoke suite with the provisioned UUID.
 
 The immediate strategy eliminates old/new write overlap but does not make an old application binary schema-compatible. Rollback after the non-null migration remains a roll-forward database operation: the old application cannot create users without `pin_hash`. The deployment notes must therefore include a tested corrective release/database procedure rather than assuming an application-only rollback is safe.
 
