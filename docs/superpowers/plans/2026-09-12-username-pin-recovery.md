@@ -92,7 +92,7 @@
 
 - [ ] **Step 3: Add the maintained pure-Java Argon2 implementation and validated properties**
 
-  Add `implementation("org.springframework.security:spring-security-crypto")` and `implementation("org.bouncycastle:bcprov-jdk18on")`, both version-managed by Spring Boot 3.5.11. Define:
+  Add `implementation("org.springframework.security:spring-security-crypto")` (version-managed by Spring Boot 3.5.11) and `implementation("org.bouncycastle:bcprov-jdk18on:1.86")` (not managed by the Boot BOM). Define:
 
   ```java
   @Validated
@@ -113,7 +113,7 @@
 
 - [ ] **Step 4: Implement the lower-level codec**
 
-  `CanonicalPin` defensively copies its UTF-8 byte array. NFC-normalize, reject any surrogate code unit before code-point iteration, replace the five categories, require exactly four code points, and preserve spaces/case. HMAC input is length-unambiguous:
+  `CanonicalPin` defensively copies its UTF-8 byte array. Reject only unpaired UTF-16 high or low surrogates while accepting valid high/low pairs, NFC-normalize, replace the five categories by Unicode code point, require exactly four code points, and preserve spaces/case. HMAC input is length-unambiguous:
 
   ```java
   mac.update("bitbrush-pin-v1\0".getBytes(StandardCharsets.US_ASCII));
@@ -257,7 +257,7 @@
 
 - [ ] **Step 2: Modify entities and repositories**
 
-  Give `User` fields `uuid`, `username`, `authorId`, `pinHash`, `pinBackfilled`; name table constraints `uk_users_username` and `uk_users_author_id` and keep the private UUID primary key named by migration as `pk_users_uuid`. Rename the Java/column pixel property to `authorId`. Add:
+  Give `User` fields `uuid`, `username`, `authorId`, `pinHash`, `pinBackfilled`; name table constraints `uk_users_username` and `uk_users_author_id` and keep the private UUID primary key named by migration as `pk_users_uuid`. Because UUID is assigned before persistence and identities are insert-only, implement `Persistable<String>` with transient `isNew=true`, `getId()` returning UUID, and a `@PostLoad`/`@PostPersist` callback setting `isNew=false`; this makes Spring Data choose `EntityManager.persist` rather than `merge` for newly constructed users. Add a repository test proving a newly constructed duplicate UUID raises the primary-key violation instead of updating the existing identity. Rename the Java/column pixel property to `authorId`. Add:
 
   ```java
   Optional<User> findByUsername(String username);
@@ -276,7 +276,7 @@
 
 - [ ] **Step 5: Refactor `PixelService` to resolve once and persist public authorship**
 
-  Replace `existsById` with `findById(request.authorUuid()).orElseThrow(UserNotFoundException::new)`, perform it before banking deduction, then use `user.getAuthorId()` for `Pixel.authorId`, `PixelBroadcast.authorId`, username resolution, and current-author query. Remove user registration methods and all credential-bearing log arguments.
+  Replace `existsById` with `findById(request.authorUuid()).orElseThrow(() -> new UserNotFoundException(request.authorUuid()))`, perform it before banking deduction, then use `user.getAuthorId()` for `Pixel.authorId`, `PixelBroadcast.authorId`, username resolution, and current-author query. Remove credential-bearing log arguments. Retain `userExists` and `registerUser` temporarily so the unchanged controller compiles; Task 6 removes them atomically with their final callers.
 
 - [ ] **Step 6: Run repository and canvas tests and commit**
 
@@ -292,7 +292,7 @@
 ### Task 5: Identity Workflow Service
 
 **Files:**
-- Replace: `src/main/java/au/com/dingwall/mark/bitbrush/dto/UserRegistrationRequest.java` with `UserCreateRequest.java`
+- Create: `src/main/java/au/com/dingwall/mark/bitbrush/dto/UserCreateRequest.java`
 - Create: `src/main/java/au/com/dingwall/mark/bitbrush/dto/UserReconnectRequest.java`
 - Create: `src/main/java/au/com/dingwall/mark/bitbrush/dto/UserRecoveryRequest.java`
 - Create: `src/main/java/au/com/dingwall/mark/bitbrush/dto/UserIdentityResponse.java`
@@ -302,7 +302,6 @@
 - Create: `src/main/java/au/com/dingwall/mark/bitbrush/exception/DuplicateIdentityException.java`
 - Create: `src/main/java/au/com/dingwall/mark/bitbrush/exception/InvalidCredentialsException.java`
 - Test: `src/test/java/au/com/dingwall/mark/bitbrush/service/UserIdentityServiceTest.java`
-- Modify: fixtures in tests that previously called `PixelService.registerUser`
 
 **Interfaces:**
 - Consumes: Tasks 1–4 services/repository and `TurnstileService.verify/markVerified`.
@@ -320,11 +319,11 @@
 
 - [ ] **Step 2: Add creation success, collision, and transaction-failure tests**
 
-  Cover reserved `You`, exact username conflict, private UUID collision in either identifier column, invalid/noncanonical UUID, generated public-ID syntax, forced author-ID collision followed by success, five author-ID collisions, named UUID/username constraint races, unrelated integrity errors, flush failure, and commit-time failure. Assert each retry calls a new `TransactionTemplate.execute` and only one committed UUID is marked verified.
+  Cover reserved `You`, exact username conflict, private UUID collision in either identifier column, invalid/noncanonical UUID, generated public-ID syntax, forced author-ID collision followed by success, five author-ID collisions, named UUID/username constraint races, unrelated integrity errors, flush failure, and commit-time failure. Add a staggered same-UUID race that pauses request B after its precheck, commits request A, then releases B; assert B performs insert-only persistence, receives the named primary-key conflict, and cannot modify A's username, public author ID, or PIN hash. Assert each public-ID retry calls a new `TransactionTemplate.execute` and only one committed UUID is marked verified.
 
 - [ ] **Step 3: Implement create with explicit transaction boundaries**
 
-  The service itself has no `@Transactional`. Precheck, then execute one complete `saveAndFlush` attempt per generated author ID. Classify only `pk_users_uuid`, `uk_users_username`, and `uk_users_author_id` by walking nested `SQLException`/Hibernate constraint exceptions. Retry only `uk_users_author_id`, map UUID/username to `DuplicateIdentityException`, and rethrow all others. Call `markVerified` after `TransactionTemplate.execute` returns.
+  The service itself has no `@Transactional`. Precheck, then execute one complete insert-only `saveAndFlush` attempt per generated author ID; Task 4's `Persistable.isNew()` contract must cause `persist`, never `merge`, for the constructed identity. Classify only `pk_users_uuid`, `uk_users_username`, and `uk_users_author_id` by walking nested `SQLException`/Hibernate constraint exceptions. Retry only `uk_users_author_id`, map UUID/username to `DuplicateIdentityException`, and rethrow all others. Call `markVerified` after `TransactionTemplate.execute` returns.
 
 - [ ] **Step 4: Add reconnect and recovery tests**
 
@@ -349,11 +348,14 @@
 
 **Files:**
 - Modify: `src/main/java/au/com/dingwall/mark/bitbrush/controller/UserController.java`
+- Delete: `src/main/java/au/com/dingwall/mark/bitbrush/dto/UserRegistrationRequest.java`
+- Modify: `src/main/java/au/com/dingwall/mark/bitbrush/service/PixelService.java`
 - Modify: `src/main/java/au/com/dingwall/mark/bitbrush/exception/GlobalExceptionHandler.java`
 - Modify: `src/main/java/au/com/dingwall/mark/bitbrush/exception/UserNotFoundException.java`
 - Modify: `src/main/java/au/com/dingwall/mark/bitbrush/controller/PixelController.java`
 - Test: `src/test/java/au/com/dingwall/mark/bitbrush/controller/UserControllerSliceTest.java`
 - Modify: `src/test/java/au/com/dingwall/mark/bitbrush/controller/UserControllerTest.java`
+- Modify: `src/test/java/au/com/dingwall/mark/bitbrush/service/PixelServiceTest.java`
 - Modify: `src/test/java/au/com/dingwall/mark/bitbrush/exception/GlobalExceptionHandlerTest.java`
 - Create: `src/test/java/au/com/dingwall/mark/bitbrush/SensitiveDataLoggingTest.java`
 
@@ -367,7 +369,7 @@
 
 - [ ] **Step 2: Implement the thin controller**
 
-  Inject only `UserIdentityService` and `ClientIpResolver`. Return `ResponseEntity<UserIdentityResponse>`; pass the Turnstile header to create/recover and resolve IP only for recovery. Do not log request DTOs or identity response values.
+  Inject only `UserIdentityService` and `ClientIpResolver`. Return `ResponseEntity<UserIdentityResponse>`; pass the Turnstile header to create/recover and resolve IP only for recovery. Do not log request DTOs or identity response values. In this same step delete `UserRegistrationRequest`, remove the now-unused `PixelService.userExists/registerUser` methods, and replace their old `PixelServiceTest` cases with identity-service coverage so no intermediate commit has dangling callers.
 
 - [ ] **Step 3: Test and implement generic errors**
 
@@ -464,7 +466,7 @@
 
 - [ ] **Step 4: Add CI migration enforcement and run the migration test**
 
-  Add a `migrationTest` Gradle task selecting `*LegacyIdentityMigrationTest`. Make the test use a Docker availability assumption locally but fail under `CI=true` if unavailable/skipped. Add a distinct CI step `./gradlew migrationTest --no-daemon` before the normal build.
+  Add a `migrationTest` Gradle task including only `**/LegacyIdentityMigrationTest.class`, while the ordinary `test` task explicitly excludes that class. Keep `useJUnitPlatform()` on all `Test` tasks, but move `finalizedBy(jacocoTestReport)` from `tasks.withType<Test>` to `tasks.named<Test>("test")`; retain `jacocoTestReport.dependsOn(test)`. This prevents `migrationTest` from pulling in the ordinary suite and prevents the container test from running twice. Make the test use a Docker availability assumption locally but fail under `CI=true` if unavailable/skipped. Add a distinct CI step `./gradlew migrationTest --no-daemon` before the normal build.
 
   Run with Docker: `./gradlew migrationTest`
 
@@ -544,7 +546,7 @@
 
 - [ ] **Step 3: Add the local command and run it**
 
-  Add `"test:local": "playwright test --config=playwright.local.config.ts"` and a Playwright `webServer` entry running `node local-server.mjs`.
+  Add `"test:local": "playwright test --config=playwright.local.config.ts"` and a Playwright `webServer` entry running `node local-server.mjs`. Set local `testMatch` to `['**/local-harness.spec.ts', '**/identity-full-page.spec.ts', '**/identity-widget.spec.ts']`; set the existing production config's `testMatch` to `'**/bitbrush-widget.spec.ts'`. These complementary selectors keep local and production discovery disjoint even though the files share `e2e/tests`.
 
   Run: `cd e2e && npm ci && npx playwright install chromium && npm run test:local`
 
