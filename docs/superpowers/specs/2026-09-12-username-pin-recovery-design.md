@@ -347,7 +347,7 @@ Credential-concurrency tests prove that no more than the configured number of re
 
 MockMvc slice tests cover all three contracts, missing/malformed bodies, Unicode JSON, source-IP resolution, delegation to the single service-owned workflow, every expected status, generic problem details, `Retry-After`, `Cache-Control: no-store`, and absence of PIN/hash response fields. Filter tests prove both declared `Content-Length` and chunked/unknown-length bodies stop at 4 KiB with `413` before controller, Turnstile, or credential work, while an exact-limit body reaches normal validation.
 
-Captured-log tests exercise create, reconnect, recover, failed reconnect, STOMP connect/disconnect, and pixel placement at the most verbose supported application log level. They assert that the private UUID, PIN, hash, and pepper are absent from both logs and rendered problem details.
+Captured-log tests exercise create, reconnect, recover, failed reconnect, STOMP connect/disconnect, and pixel placement at the most verbose supported application log level. Spring's STOMP messaging namespaces remain at INFO or higher in every supported profile because the framework itself renders native headers and Principals at DEBUG/TRACE. Tests assert those logger ceilings and that the private UUID, PIN, hash, and pepper are absent from all output under the supported configuration and from rendered problem details.
 
 ### Repository and application integration tests
 

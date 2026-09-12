@@ -175,7 +175,7 @@
 
 - [ ] **Step 1: Write failing deterministic throttle and concurrency tests**
 
-  Use `MutableClock` and barriers. For username and IP independently assert configured limits and window values, immediately below/at/after limits, exact rolling expiry, success clearing username only, exact case sensitivity, unknown username accounting, key independence, bounded-map fail-closed behavior with computed `Retry-After`, and cleanup racing with checks. Include a capacity-one case whose resident key has multiple timestamps and prove the reported delay reaches that key's final timestamp expiry. Add simultaneous first-key admission at capacity and prove no reserved-but-unpublished state, missing delay, or leaked slot is observable. The default-limit concurrency assertion is:
+  Use `MutableClock` and barriers. For username and IP independently assert configured limits and window values, immediately below/at/after limits, exact rolling expiry, success clearing username only, exact case sensitivity, unknown username accounting, key independence, bounded-map fail-closed behavior with computed `Retry-After`, and cleanup racing with checks. Include a capacity-one case whose resident key has multiple timestamps and prove the reported delay reaches that key's final timestamp expiry. Add simultaneous first-key admission at capacity and prove no reserved-but-unpublished state, missing delay, or leaked slot is observable. Add deterministic races for an existing-key update during capacity-delay calculation and cleanup removing that key before its update; assert the reported delay, attempt count, and capacity bound remain correct. The default-limit concurrency assertion is:
 
   ```java
   AtomicInteger accepted = new AtomicInteger();
@@ -192,7 +192,7 @@
 
 - [ ] **Step 2: Implement atomic rolling windows**
 
-  Store immutable timestamp deques in `ConcurrentHashMap.compute`; prune timestamps `<= now.minus(recoveryWindow)`, reject before adding when the configured applicable limit is already present, and compute ceiling seconds for `Retry-After`. Serialize new-key admission and expired-key removal through one small coordination boundary: recheck absence/capacity there and publish the first timestamp before releasing it, with no separate reserved-but-unpublished state; existing-key attempt updates remain atomic `ConcurrentHashMap.compute` operations. After pruning, capacity exhaustion computes its generic `RecoveryCapacityException.retryAfterSeconds` as `min(last timestamp for each live key + recoveryWindow) - now`, rounded up, because a capacity slot is freed only when an entire key expires. Thus every recovery `429` has an applicable remaining delay without disclosing the dimension. Expose package-private `cleanupExpired()` for deterministic tests and scheduled opportunistic cleanup.
+  Use one coordination lock per map around every admission, existing-key update, clear, expired-key removal, and capacity-delay snapshot. Store immutable timestamp deques as map values, prune timestamps `<= now.minus(recoveryWindow)`, reject before adding when the configured applicable limit is already present, and compute ceiling seconds for `Retry-After`. Only the locked admission path may transform absent to present, and it publishes the first timestamp before releasing the lock; there is no separate reserved-but-unpublished state or remove/recreate path outside the boundary. After pruning, capacity exhaustion computes its generic `RecoveryCapacityException.retryAfterSeconds` as `min(last timestamp for each live key + recoveryWindow) - now`, rounded up, because a capacity slot is freed only when an entire key expires. Thus every recovery `429` has an applicable remaining delay without disclosing the dimension. Expose package-private `cleanupExpired()` for deterministic tests and scheduled opportunistic cleanup.
 
 - [ ] **Step 3: Run focused tests and commit**
 
@@ -364,6 +364,7 @@ Tasks 4–6 are one atomic implementation work package owned by one subagent bec
 - Modify: `src/main/java/au/com/dingwall/mark/bitbrush/controller/PixelController.java`
 - Test: `src/test/java/au/com/dingwall/mark/bitbrush/controller/UserControllerSliceTest.java`
 - Modify: `src/test/java/au/com/dingwall/mark/bitbrush/controller/UserControllerTest.java`
+- Modify: `src/test/java/au/com/dingwall/mark/bitbrush/controller/PixelControllerTest.java`
 - Modify: `src/test/java/au/com/dingwall/mark/bitbrush/service/PixelServiceTest.java`
 - Modify: `src/test/java/au/com/dingwall/mark/bitbrush/service/TurnstileServiceTest.java`
 - Modify: `src/test/java/au/com/dingwall/mark/bitbrush/websocket/WebSocketIntegrationTest.java`
@@ -380,7 +381,7 @@ Tasks 4–6 are one atomic implementation work package owned by one subagent bec
 
 - [ ] **Step 2: Implement the thin controller**
 
-  Inject only `UserIdentityService` and `ClientIpResolver`. Return `ResponseEntity<UserIdentityResponse>`; pass the Turnstile header to create/recover and resolve IP only for recovery. Do not log request DTOs or identity response values. In this same step delete `UserRegistrationRequest`, remove the now-unused `PixelService.userExists/registerUser` methods, and remove `TurnstileService.verifyAndRemember` after migrating all callers to explicit `verify` then post-success `markVerified`. Replace old registration tests with identity-service coverage and update every controller/integration fixture—including the existing WebSocket pixel-broadcast setup—to create a complete user through the new identity API or persist a complete five-field fixture directly. No compatibility path may create a PIN-less user.
+  Inject only `UserIdentityService` and `ClientIpResolver`. Return `ResponseEntity<UserIdentityResponse>`; pass the Turnstile header to create/recover and resolve IP only for recovery. Do not log request DTOs or identity response values. In this same step delete `UserRegistrationRequest`, remove the now-unused `PixelService.userExists/registerUser` methods, and remove `TurnstileService.verifyAndRemember` after migrating all callers to explicit `verify` then post-success `markVerified`. Replace old registration tests with identity-service coverage and update every controller/integration fixture—including the existing WebSocket pixel-broadcast setup—to create a complete user through the new identity API or persist a complete five-field fixture directly. Change `PixelControllerTest`'s public response assertion from `$.authorUuid` to `$.authorId` and assert the user's public ID. No compatibility path may create a PIN-less user.
 
 - [ ] **Step 3: Test and implement generic errors**
 
@@ -408,6 +409,10 @@ Tasks 4–6 are one atomic implementation work package owned by one subagent bec
 - Modify: `src/main/java/au/com/dingwall/mark/bitbrush/websocket/WebSocketEventListener.java`
 - Modify: `src/main/java/au/com/dingwall/mark/bitbrush/service/BankingService.java`
 - Modify: `src/main/java/au/com/dingwall/mark/bitbrush/service/TurnstileService.java`
+- Modify: `src/main/resources/application-dev.properties`
+- Modify: `src/main/resources/application-test.properties`
+- Modify: `src/main/resources/application-docker.properties`
+- Modify: `src/main/resources/application-prod.properties`
 - Modify: `src/test/java/au/com/dingwall/mark/bitbrush/service/BankingServiceTest.java`
 - Modify: `src/test/java/au/com/dingwall/mark/bitbrush/service/TurnstileServiceTest.java`
 - Modify: `src/test/java/au/com/dingwall/mark/bitbrush/controller/PixelControllerTest.java`
@@ -428,7 +433,7 @@ Tasks 4–6 are one atomic implementation work package owned by one subagent bec
 
 - [ ] **Step 3: Add interceptor unit/integration cases for both connection commands**
 
-  Cover known canonical private UUID, missing, blank, malformed, public author ID, unknown UUID, and repository failure for both `CONNECT` and `STOMP`. Assert rejected cases receive an ERROR or transport close, no `SessionConnectEvent`/CONNECTED frame, and never call `markVerified`; accepted cases expose the expected Principal and call `markVerified` synchronously. Add valid and invalid single-WebSocket-message pipelines containing `CONNECT + SEND/SUBSCRIBE`, proving follow-on frames cannot outrun or bypass handshake authentication and captured framework/application logs never contain the submitted UUID.
+  Cover known canonical private UUID, missing, blank, malformed, public author ID, unknown UUID, and repository failure for both `CONNECT` and `STOMP`. Assert rejected cases receive an ERROR or transport close, no `SessionConnectEvent`/CONNECTED frame, and never call `markVerified`; accepted cases expose the expected Principal and call `markVerified` synchronously. Add valid and invalid single-WebSocket-message pipelines containing `CONNECT + SEND/SUBSCRIBE`, proving follow-on frames cannot outrun or bypass handshake authentication. Under the supported logger configuration, run application packages at TRACE while keeping `org.springframework.messaging.simp` and `org.springframework.web.socket.messaging` at INFO or higher, and assert the captured combined logs never contain the submitted UUID; retain an ERROR-level framework assertion for the invalid pipeline.
 
 - [ ] **Step 4: Implement synchronous STOMP authentication**
 
@@ -444,7 +449,7 @@ Tasks 4–6 are one atomic implementation work package owned by one subagent bec
 
 - [ ] **Step 7: Run WebSocket/banking tests and commit**
 
-  Replace `PixelControllerTest`'s manual `onUserConnect/onUserDisconnect` setup with `ensureBank`, remove obsolete session constants/cleanup, and keep its isolated bank cases explicit. Extend `SensitiveDataLoggingTest` with STOMP connect/disconnect and banking operations at DEBUG/TRACE, remove private UUID log arguments from Task 7-owned components, and assert only session IDs/counts/public author IDs can appear.
+  Replace `PixelControllerTest`'s manual `onUserConnect/onUserDisconnect` setup with `ensureBank`, remove obsolete session constants/cleanup, and keep its isolated bank cases explicit. Extend `SensitiveDataLoggingTest` with STOMP connect/disconnect and banking operations at application DEBUG/TRACE, remove private UUID log arguments from Task 7-owned components, and assert only session IDs/counts/public author IDs can appear. Configure both Spring STOMP namespaces above to remain at INFO or higher in every profile and assert those logger ceilings in the test; this is the supported logging boundary because Spring 6.2.16 itself renders native headers and Principals at DEBUG/TRACE.
 
   Run: `./gradlew test --tests '*BankingServiceTest' --tests '*TurnstileServiceTest' --tests '*PixelControllerTest' --tests '*WebSocketIntegrationTest' --tests '*SensitiveDataLoggingTest'`
 
@@ -747,7 +752,7 @@ Tasks 4–6 are one atomic implementation work package owned by one subagent bec
 
 - [ ] **Step 5: Update architecture and operator documentation**
 
-  Document three endpoints, local storage containing UUID/username only, public author IDs, process-local throttle assumption, `PIN_PEPPER` generation/backup and loss consequences, Argon2 calibration values, `PIN_BACKFILL_EXPORT_PATH`, protected retrieval/deletion order, `BITBRUSH_E2E_UUID`, immediate deployment strategy, PostgreSQL backup, and roll-forward-only corrective rollback after V4. Update Docker/Fly configuration to require the pepper without committing one, and set and verify `[deploy] strategy = "immediate"` in `fly.toml` so rollout safety is enforced rather than left as prose.
+  Document three endpoints, local storage containing UUID/username only, public author IDs, process-local throttle assumption, the INFO-or-higher Spring STOMP logging ceiling, `PIN_PEPPER` generation/backup and loss consequences, Argon2 calibration values, `PIN_BACKFILL_EXPORT_PATH`, protected retrieval/deletion order, `BITBRUSH_E2E_UUID`, immediate deployment strategy, PostgreSQL backup, and roll-forward-only corrective rollback after V4. Update Docker/Fly configuration to require the pepper without committing one, and set and verify `[deploy] strategy = "immediate"` in `fly.toml` so rollout safety is enforced rather than left as prose.
 
 - [ ] **Step 6: Build the production container and run local browser checks**
 
