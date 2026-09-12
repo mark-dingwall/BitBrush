@@ -175,7 +175,7 @@
 
 - [ ] **Step 1: Write failing deterministic throttle and concurrency tests**
 
-  Use `MutableClock` and barriers. For username and IP independently assert configured limits and window values, immediately below/at/after limits, exact rolling expiry, success clearing username only, exact case sensitivity, unknown username accounting, key independence, bounded-map fail-closed behavior with computed `Retry-After`, and cleanup racing with checks. The default-limit concurrency assertion is:
+  Use `MutableClock` and barriers. For username and IP independently assert configured limits and window values, immediately below/at/after limits, exact rolling expiry, success clearing username only, exact case sensitivity, unknown username accounting, key independence, bounded-map fail-closed behavior with computed `Retry-After`, and cleanup racing with checks. Include a capacity-one case whose resident key has multiple timestamps and prove the reported delay reaches that key's final timestamp expiry. The default-limit concurrency assertion is:
 
   ```java
   AtomicInteger accepted = new AtomicInteger();
@@ -192,7 +192,7 @@
 
 - [ ] **Step 2: Implement atomic rolling windows**
 
-  Store immutable timestamp deques in `ConcurrentHashMap.compute`; prune timestamps `<= now.minus(recoveryWindow)`, reject before adding when the configured applicable limit is already present, and compute ceiling seconds for `Retry-After`. Allocate a new key only after an atomic capacity reservation; release reservations when entries expire or are cleared. After pruning, capacity exhaustion computes its generic `RecoveryCapacityException.retryAfterSeconds` from the earliest live entry that can free a slot, so every recovery `429` has an applicable remaining delay without disclosing the dimension. Expose package-private `cleanupExpired()` for deterministic tests and scheduled opportunistic cleanup.
+  Store immutable timestamp deques in `ConcurrentHashMap.compute`; prune timestamps `<= now.minus(recoveryWindow)`, reject before adding when the configured applicable limit is already present, and compute ceiling seconds for `Retry-After`. Allocate a new key only after an atomic capacity reservation; release reservations when entries expire or are cleared. After pruning, capacity exhaustion computes its generic `RecoveryCapacityException.retryAfterSeconds` as `min(last timestamp for each live key + recoveryWindow) - now`, rounded up, because a capacity slot is freed only when an entire key expires. Thus every recovery `429` has an applicable remaining delay without disclosing the dimension. Expose package-private `cleanupExpired()` for deterministic tests and scheduled opportunistic cleanup.
 
 - [ ] **Step 3: Run focused tests and commit**
 
@@ -262,7 +262,7 @@ Tasks 4–6 are one atomic implementation work package owned by one subagent bec
 
 - [ ] **Step 1: Expand repository tests before entities**
 
-  Build users with all five fields and assert exact-case `findByUsername`, `findByAuthorId`, `existsByAuthorId`, non-null fields, and unique username/private UUID/public ID. For the assigned-ID regression, `saveAndFlush` the first row, clear the `EntityManager`, then persist a second newly constructed entity with the same UUID so the assertion reaches the database primary-key constraint rather than Hibernate's same-context identity check; verify the first row is unchanged. Add pixel repository tests proving current-author queries use public `authorId` and still work for UUID-shaped legacy author IDs.
+  Build users with all five fields and assert exact-case `findByUsername`, `findByAuthorId`, `existsByAuthorId`, non-null fields, and unique username/private UUID/public ID. Make the assigned-ID regression non-transactional at the test boundary and use three explicit `TransactionTemplate` transactions: commit the first row; attempt and catch the duplicate newly constructed insert in a fresh transaction; then reload and assert the original fields in a third transaction. This reaches the database primary-key constraint without reusing a failed persistence context. Add pixel repository tests proving current-author queries use public `authorId` and still work for UUID-shaped legacy author IDs.
 
 - [ ] **Step 2: Modify entities and repositories**
 
@@ -326,11 +326,11 @@ Tasks 4–6 are one atomic implementation work package owned by one subagent bec
 
 - [ ] **Step 2: Add creation success, collision, and transaction-failure tests**
 
-  Cover reserved `You`, exact username conflict, private UUID collision in either identifier column, invalid/noncanonical UUID, generated public-ID syntax, forced author-ID collision followed by success, five author-ID collisions, named UUID/username constraint races, unrelated integrity errors, flush failure, and commit-time failure. Add a staggered same-UUID race that pauses request B after its precheck, commits request A, then releases B; assert B performs insert-only persistence, receives the named primary-key conflict, and cannot modify A's username, public author ID, or PIN hash. Assert each public-ID retry calls a new `TransactionTemplate.execute` and only one committed UUID is marked verified.
+  Cover reserved `You`, exact username conflict, private UUID collision in either identifier column, invalid/noncanonical UUID, generated public-ID syntax, forced author-ID collision followed by success, five author-ID collisions, named UUID/username constraint races, unrelated integrity errors, a same-`23505` exception without a recognized structured constraint name, flush failure, and commit-time failure. Add a staggered same-UUID race that pauses request B after its precheck, commits request A, then releases B; assert B performs insert-only persistence, receives the named primary-key conflict, and cannot modify A's username, public author ID, or PIN hash. Assert each public-ID retry calls a new `TransactionTemplate.execute` and only one committed UUID is marked verified.
 
 - [ ] **Step 3: Implement create with explicit transaction boundaries**
 
-  The service itself has no `@Transactional`. Precheck, then execute one complete insert-only `saveAndFlush` attempt per generated author ID; Task 4's `Persistable.isNew()` contract must cause `persist`, never `merge`, for the constructed identity. Classify only `pk_users_uuid`, `uk_users_username`, and `uk_users_author_id` by walking nested `SQLException`/Hibernate constraint exceptions. Retry only `uk_users_author_id`, map UUID/username to `DuplicateIdentityException`, and rethrow all others. Call `markVerified` after `TransactionTemplate.execute` returns.
+  The service itself has no `@Transactional`. Precheck, then execute one complete insert-only `saveAndFlush` attempt per generated author ID; Task 4's `Persistable.isNew()` contract must cause `persist`, never `merge`, for the constructed identity. Classify only structured names returned by Hibernate `ConstraintViolationException.getConstraintName()` while walking the cause chain: `pk_users_uuid`, `uk_users_username`, and `uk_users_author_id`. Never parse exception-message substrings or classify by SQLState alone; a same-`23505` exception with no recognized structured constraint name is rethrown. Retry only `uk_users_author_id`, map UUID/username to `DuplicateIdentityException`, and rethrow all others. Call `markVerified` after `TransactionTemplate.execute` returns.
 
 - [ ] **Step 4: Add reconnect and recovery tests**
 
@@ -354,11 +354,14 @@ Tasks 4–6 are one atomic implementation work package owned by one subagent bec
 - Modify: `src/main/java/au/com/dingwall/mark/bitbrush/controller/UserController.java`
 - Delete: `src/main/java/au/com/dingwall/mark/bitbrush/dto/UserRegistrationRequest.java`
 - Modify: `src/main/java/au/com/dingwall/mark/bitbrush/service/PixelService.java`
+- Modify: `src/main/java/au/com/dingwall/mark/bitbrush/service/TurnstileService.java`
 - Modify: `src/main/java/au/com/dingwall/mark/bitbrush/exception/GlobalExceptionHandler.java`
 - Modify: `src/main/java/au/com/dingwall/mark/bitbrush/controller/PixelController.java`
 - Test: `src/test/java/au/com/dingwall/mark/bitbrush/controller/UserControllerSliceTest.java`
 - Modify: `src/test/java/au/com/dingwall/mark/bitbrush/controller/UserControllerTest.java`
 - Modify: `src/test/java/au/com/dingwall/mark/bitbrush/service/PixelServiceTest.java`
+- Modify: `src/test/java/au/com/dingwall/mark/bitbrush/service/TurnstileServiceTest.java`
+- Modify: `src/test/java/au/com/dingwall/mark/bitbrush/websocket/WebSocketIntegrationTest.java`
 - Modify: `src/test/java/au/com/dingwall/mark/bitbrush/exception/GlobalExceptionHandlerTest.java`
 - Create: `src/test/java/au/com/dingwall/mark/bitbrush/SensitiveDataLoggingTest.java`
 
@@ -372,7 +375,7 @@ Tasks 4–6 are one atomic implementation work package owned by one subagent bec
 
 - [ ] **Step 2: Implement the thin controller**
 
-  Inject only `UserIdentityService` and `ClientIpResolver`. Return `ResponseEntity<UserIdentityResponse>`; pass the Turnstile header to create/recover and resolve IP only for recovery. Do not log request DTOs or identity response values. In this same step delete `UserRegistrationRequest`, remove the now-unused `PixelService.userExists/registerUser` methods, replace their old `PixelServiceTest` cases with identity-service coverage, and update every controller/integration fixture selected by this task to create a complete user through the new identity API or persist a complete five-field fixture directly. No compatibility path may create a PIN-less user.
+  Inject only `UserIdentityService` and `ClientIpResolver`. Return `ResponseEntity<UserIdentityResponse>`; pass the Turnstile header to create/recover and resolve IP only for recovery. Do not log request DTOs or identity response values. In this same step delete `UserRegistrationRequest`, remove the now-unused `PixelService.userExists/registerUser` methods, and remove `TurnstileService.verifyAndRemember` after migrating all callers to explicit `verify` then post-success `markVerified`. Replace old registration tests with identity-service coverage and update every controller/integration fixture—including the existing WebSocket pixel-broadcast setup—to create a complete user through the new identity API or persist a complete five-field fixture directly. No compatibility path may create a PIN-less user.
 
 - [ ] **Step 3: Test and implement generic errors**
 
@@ -380,11 +383,11 @@ Tasks 4–6 are one atomic implementation work package owned by one subagent bec
 
 - [ ] **Step 4: Add captured-log privacy tests and remove sensitive logging**
 
-  At DEBUG/TRACE exercise create, reconnect, recover, failed reconnect, pixel placement, STOMP connect/disconnect, and exception rendering. Seed unique marker values for private UUID, PIN, encoded hash, and pepper, then assert none occurs in captured output or ProblemDetail JSON. Logs may contain session IDs, counts, and public author IDs only.
+  At DEBUG/TRACE exercise create, reconnect, recover, failed reconnect, pixel placement, and exception rendering. Seed unique marker values for private UUID, PIN, encoded hash, and pepper, then assert none occurs in captured output or ProblemDetail JSON. Logs may contain counts and public author IDs only. Task 7 extends this same test across its STOMP and banking ownership after removing those components' credential-bearing logs.
 
 - [ ] **Step 5: Run HTTP/privacy tests and commit**
 
-  Run: `./gradlew test --tests '*UserController*' --tests '*PixelController*' --tests '*GlobalExceptionHandlerTest' --tests '*SensitiveDataLoggingTest'`
+  Run: `./gradlew test`
 
   Expected: PASS.
 
@@ -401,8 +404,10 @@ Tasks 4–6 are one atomic implementation work package owned by one subagent bec
 - Modify: `src/main/java/au/com/dingwall/mark/bitbrush/service/BankingService.java`
 - Modify: `src/main/java/au/com/dingwall/mark/bitbrush/service/TurnstileService.java`
 - Modify: `src/test/java/au/com/dingwall/mark/bitbrush/service/BankingServiceTest.java`
+- Modify: `src/test/java/au/com/dingwall/mark/bitbrush/service/TurnstileServiceTest.java`
 - Modify: `src/test/java/au/com/dingwall/mark/bitbrush/controller/PixelControllerTest.java`
 - Modify: `src/test/java/au/com/dingwall/mark/bitbrush/websocket/WebSocketIntegrationTest.java`
+- Modify: `src/test/java/au/com/dingwall/mark/bitbrush/SensitiveDataLoggingTest.java`
 
 **Interfaces:**
 - Consumes: `UserRepository.existsById`, canonical UUID validation, `TurnstileService.markVerified`, and Spring `SimpUserRegistry`.
@@ -418,25 +423,25 @@ Tasks 4–6 are one atomic implementation work package owned by one subagent bec
 
 - [ ] **Step 3: Add interceptor unit/integration cases for both connection commands**
 
-  Cover known canonical private UUID, missing, blank, malformed, public author ID, unknown UUID, and repository failure for both `CONNECT` and `STOMP`. Assert rejected cases receive no CONNECTED frame and never call `markVerified`; accepted cases expose the expected Principal and call `markVerified` synchronously.
+  Cover known canonical private UUID, missing, blank, malformed, public author ID, unknown UUID, and repository failure for both `CONNECT` and `STOMP`. Assert rejected cases receive no CONNECTED frame and never call `markVerified`; accepted cases expose the expected Principal and call `markVerified` synchronously. Add valid and invalid pipelined `SEND` and `SUBSCRIBE` cases so follow-on frames cannot outrun or bypass handshake authentication.
 
 - [ ] **Step 4: Implement synchronous STOMP authentication**
 
-  Extract the interceptor as a named bean/class for focused testing. For either connection command, call `CanonicalUuidValidator.isCanonical(uuid)`, perform `userRepository.existsById(uuid)`, then call `accessor.setUser(new StompPrincipal(uuid))` and `markVerified(uuid)`. Throw one generic `MessagingException("Invalid connection identity")` for every rejected path and never echo the header.
+  Extract the interceptor as a named bean/class for focused testing. Enable `registry.setPreserveReceiveOrder(true)` so decoded frames from one WebSocket are handled serially. For either connection command, call `CanonicalUuidValidator.isCanonical(uuid)`, perform `userRepository.existsById(uuid)`, then call `accessor.setUser(new StompPrincipal(uuid))` and `markVerified(uuid)`. For every later non-heartbeat client command, require the propagated authenticated Principal and reject its absence with the same generic `MessagingException("Invalid connection identity")`. Never echo the header.
 
 - [ ] **Step 5: Simplify lifecycle listener and verification lifetime**
 
-  Read `event.getUser()` at `SessionConnectedEvent`, add the idempotent session ID to the existing online-count set, and call `bankingService.ensureBank(principal.getName())`. On disconnect remove only the session ID and broadcast count. Remove `removeVerified` use and method; verification persists until restart.
+  Read `event.getUser()` at `SessionConnectedEvent`, add the idempotent session ID to the existing online-count set, and call `bankingService.ensureBank(principal.getName())`. On disconnect remove only the session ID and broadcast count. Remove `removeVerified` use and method, update `TurnstileServiceTest`, and prove verification persists until restart. Task 6 already removed `verifyAndRemember`, leaving `verify`, `markVerified`, and `isVerified` as the explicit lifecycle API.
 
 - [ ] **Step 6: Add raw-frame and deterministic multi-session integration tests**
 
-  Send an invalid raw `STOMP` frame followed in the same socket write by `SEND`; assert no registry session, count change, bank, application invocation, or pixel broadcast. Add reconnect-after-cache-clear, blocked-downstream-after-validation, and disconnect-retains-verification cases. For two sessions, do not wait for STOMP receipts because the configured simple broker does not emit them. Instead, use a test listener/latch for each `SessionSubscribeEvent` on `/user/queue/bank`, wait for registry state one user/two sessions with both subscriptions present, and await each concrete `/app/bank` initial reply before recording the baseline. Call `earnPoints`, assert exactly one `balance + 1` message on each and no extra; disconnect one and await one session, tick and assert only survivor advances; disconnect final, await no user, tick and assert no earning. Set a long scheduler interval in this test.
+  Send an invalid raw `STOMP` frame followed in the same socket write by `SEND` and `SUBSCRIBE`; assert no registry session, count change, bank, application invocation, subscription, or pixel broadcast. Add reconnect-after-cache-clear, blocked-downstream-after-validation, disconnect-retains-verification, and valid pipelined-frame cases. For two sessions, do not wait for STOMP receipts because the configured simple broker does not emit them. With receive-order preservation enabled, have each session subscribe first to `/user/queue/bank`, then to `/app/bank`; receipt of that session's concrete `/app/bank` initial response is the barrier proving its earlier broker subscription was processed. Also wait for registry state one user/two sessions with both subscriptions present before recording the baselines. Call `earnPoints`, assert exactly one `balance + 1` message on each and no extra; disconnect one and await one session, tick and assert only survivor advances; disconnect final, await no user, tick and assert no earning. Set a long scheduler interval in this test.
 
 - [ ] **Step 7: Run WebSocket/banking tests and commit**
 
-  Replace `PixelControllerTest`'s manual `onUserConnect/onUserDisconnect` setup with `ensureBank`, remove obsolete session constants/cleanup, and keep its isolated bank cases explicit.
+  Replace `PixelControllerTest`'s manual `onUserConnect/onUserDisconnect` setup with `ensureBank`, remove obsolete session constants/cleanup, and keep its isolated bank cases explicit. Extend `SensitiveDataLoggingTest` with STOMP connect/disconnect and banking operations at DEBUG/TRACE, remove private UUID log arguments from Task 7-owned components, and assert only session IDs/counts/public author IDs can appear.
 
-  Run: `./gradlew test --tests '*BankingServiceTest' --tests '*PixelControllerTest' --tests '*WebSocketIntegrationTest'`
+  Run: `./gradlew test --tests '*BankingServiceTest' --tests '*TurnstileServiceTest' --tests '*PixelControllerTest' --tests '*WebSocketIntegrationTest' --tests '*SensitiveDataLoggingTest'`
 
   Expected: PASS without timing sleeps used as correctness gates.
 
@@ -472,7 +477,22 @@ Tasks 4–6 are one atomic implementation work package owned by one subagent bec
 
 - [ ] **Step 4: Add CI migration enforcement and run the migration test**
 
-  Add a `migrationTest` Gradle task including only `**/LegacyIdentityMigrationTest.class`, while the ordinary `test` task explicitly excludes that class. Keep `useJUnitPlatform()` on all `Test` tasks, but move `finalizedBy(jacocoTestReport)` from `tasks.withType<Test>` to `tasks.named<Test>("test")`; retain `jacocoTestReport.dependsOn(test)`. This prevents `migrationTest` from pulling in the ordinary suite and prevents the container test from running twice. Make the test use a Docker availability assumption locally but fail under `CI=true` if unavailable/skipped. Add a distinct CI step `./gradlew migrationTest --no-daemon` before the normal build.
+  Register `migrationTest` with the ordinary test source set's classes and runtime classpath, an explicit dependency on `testClasses`, a test filter that includes only `*LegacyIdentityMigrationTest`, and `isFailOnNoMatchingTests = true`; the ordinary `test` task explicitly excludes that class. Keep `useJUnitPlatform()` on all `Test` tasks, but move `finalizedBy(jacocoTestReport)` from `tasks.withType<Test>` to `tasks.named<Test>("test")`; retain `jacocoTestReport.dependsOn(test)`. The essential wiring is:
+
+  ```kotlin
+  val migrationTest by tasks.registering(Test::class) {
+      dependsOn(tasks.testClasses)
+      testClassesDirs = sourceSets.test.get().output.classesDirs
+      classpath = sourceSets.test.get().runtimeClasspath
+      filter {
+          includeTestsMatching("*LegacyIdentityMigrationTest")
+          isFailOnNoMatchingTests = true
+      }
+      useJUnitPlatform()
+  }
+  ```
+
+  This prevents `migrationTest` from reporting a false-green `NO-SOURCE`, from pulling in the ordinary suite, and from running the container test twice. Make the test use a Docker availability assumption locally but fail under `CI=true` if unavailable/skipped. Add a distinct CI step `./gradlew migrationTest --no-daemon` before the normal build and verify the task executed rather than reporting `NO-SOURCE` or `SKIPPED`.
 
   Run with Docker: `./gradlew migrationTest`
 
