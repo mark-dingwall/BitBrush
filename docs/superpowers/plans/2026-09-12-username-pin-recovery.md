@@ -175,7 +175,7 @@
 
 - [ ] **Step 1: Write failing deterministic throttle and concurrency tests**
 
-  Use `MutableClock` and barriers. For username and IP independently assert configured limits and window values, immediately below/at/after limits, exact rolling expiry, success clearing username only, exact case sensitivity, unknown username accounting, key independence, bounded-map fail-closed behavior with computed `Retry-After`, and cleanup racing with checks. Include a capacity-one case whose resident key has multiple timestamps and prove the reported delay reaches that key's final timestamp expiry. The default-limit concurrency assertion is:
+  Use `MutableClock` and barriers. For username and IP independently assert configured limits and window values, immediately below/at/after limits, exact rolling expiry, success clearing username only, exact case sensitivity, unknown username accounting, key independence, bounded-map fail-closed behavior with computed `Retry-After`, and cleanup racing with checks. Include a capacity-one case whose resident key has multiple timestamps and prove the reported delay reaches that key's final timestamp expiry. Add simultaneous first-key admission at capacity and prove no reserved-but-unpublished state, missing delay, or leaked slot is observable. The default-limit concurrency assertion is:
 
   ```java
   AtomicInteger accepted = new AtomicInteger();
@@ -192,7 +192,7 @@
 
 - [ ] **Step 2: Implement atomic rolling windows**
 
-  Store immutable timestamp deques in `ConcurrentHashMap.compute`; prune timestamps `<= now.minus(recoveryWindow)`, reject before adding when the configured applicable limit is already present, and compute ceiling seconds for `Retry-After`. Allocate a new key only after an atomic capacity reservation; release reservations when entries expire or are cleared. After pruning, capacity exhaustion computes its generic `RecoveryCapacityException.retryAfterSeconds` as `min(last timestamp for each live key + recoveryWindow) - now`, rounded up, because a capacity slot is freed only when an entire key expires. Thus every recovery `429` has an applicable remaining delay without disclosing the dimension. Expose package-private `cleanupExpired()` for deterministic tests and scheduled opportunistic cleanup.
+  Store immutable timestamp deques in `ConcurrentHashMap.compute`; prune timestamps `<= now.minus(recoveryWindow)`, reject before adding when the configured applicable limit is already present, and compute ceiling seconds for `Retry-After`. Serialize new-key admission and expired-key removal through one small coordination boundary: recheck absence/capacity there and publish the first timestamp before releasing it, with no separate reserved-but-unpublished state; existing-key attempt updates remain atomic `ConcurrentHashMap.compute` operations. After pruning, capacity exhaustion computes its generic `RecoveryCapacityException.retryAfterSeconds` as `min(last timestamp for each live key + recoveryWindow) - now`, rounded up, because a capacity slot is freed only when an entire key expires. Thus every recovery `429` has an applicable remaining delay without disclosing the dimension. Expose package-private `cleanupExpired()` for deterministic tests and scheduled opportunistic cleanup.
 
 - [ ] **Step 3: Run focused tests and commit**
 
@@ -254,7 +254,12 @@ Tasks 4–6 are one atomic implementation work package owned by one subagent bec
 - Create: `src/main/java/au/com/dingwall/mark/bitbrush/service/AuthorIdGenerator.java`
 - Modify: `src/main/java/au/com/dingwall/mark/bitbrush/service/PixelService.java`
 - Modify: `src/main/java/au/com/dingwall/mark/bitbrush/exception/UserNotFoundException.java`
-- Modify: related existing pixel/canvas/repository tests
+- Modify: `src/test/java/au/com/dingwall/mark/bitbrush/repository/UserRepositoryTest.java`
+- Modify: `src/test/java/au/com/dingwall/mark/bitbrush/repository/PixelRepositoryTest.java`
+- Modify: `src/test/java/au/com/dingwall/mark/bitbrush/service/PixelServiceTest.java`
+- Modify: `src/test/java/au/com/dingwall/mark/bitbrush/service/CanvasExportServiceTest.java`
+- Modify: `src/test/java/au/com/dingwall/mark/bitbrush/controller/CanvasControllerTest.java`
+- Modify: `src/test/java/au/com/dingwall/mark/bitbrush/controller/StatsControllerTest.java`
 
 **Interfaces:**
 - Consumes: private UUID from `PixelPlacementRequest.authorUuid()`.
@@ -282,7 +287,7 @@ Tasks 4–6 are one atomic implementation work package owned by one subagent bec
 
 - [ ] **Step 4: Write failing pixel-service privacy tests**
 
-  Given a request containing a private UUID and a repository user with `authorId`, assert saved pixels, broadcasts, info responses, and author-highlight queries contain only the public ID. Assert `getPixelInfo` resolves usernames through `findByAuthorId` for both new `author_…` IDs and UUID-shaped migrated public IDs. Assert a public author ID supplied as bearer input fails lookup and writes/deducts nothing. Capture debug logs and assert private UUID absence.
+  Given a request containing a private UUID and a repository user with `authorId`, assert saved pixels, broadcasts, info responses, and author-highlight queries contain only the public ID. Assert `getPixelInfo` resolves usernames through `findByAuthorId` for both new `author_…` IDs and UUID-shaped migrated public IDs. Assert a public author ID supplied as bearer input fails lookup and writes/deducts nothing. Capture debug logs and assert private UUID absence. Remove the two obsolete `PixelService.registerUser` unit tests now; Task 5 replaces that behavior with `UserIdentityService` coverage before the atomic checkpoint.
 
 - [ ] **Step 5: Refactor `PixelService` to resolve once and persist public authorship**
 
@@ -290,7 +295,7 @@ Tasks 4–6 are one atomic implementation work package owned by one subagent bec
 
 - [ ] **Step 6: Run focused repository and canvas tests**
 
-  Run: `./gradlew test --tests '*UserRepositoryTest' --tests '*PixelRepositoryTest' --tests '*PixelServiceTest' --tests '*CanvasController*' --tests '*StatsController*'`
+  Before running, use `rg 'setAuthorUuid|getAuthorUuid|authorUuid\\(\\)' src/test/java` and update every compile-time pixel-property reference, including `CanvasExportServiceTest`. Run: `./gradlew test --tests '*UserRepositoryTest' --tests '*PixelRepositoryTest' --tests '*PixelServiceTest' --tests '*CanvasExportServiceTest' --tests '*CanvasController*' --tests '*StatsController*'`
 
   Expected: PASS.
 
@@ -423,11 +428,11 @@ Tasks 4–6 are one atomic implementation work package owned by one subagent bec
 
 - [ ] **Step 3: Add interceptor unit/integration cases for both connection commands**
 
-  Cover known canonical private UUID, missing, blank, malformed, public author ID, unknown UUID, and repository failure for both `CONNECT` and `STOMP`. Assert rejected cases receive no CONNECTED frame and never call `markVerified`; accepted cases expose the expected Principal and call `markVerified` synchronously. Add valid and invalid pipelined `SEND` and `SUBSCRIBE` cases so follow-on frames cannot outrun or bypass handshake authentication.
+  Cover known canonical private UUID, missing, blank, malformed, public author ID, unknown UUID, and repository failure for both `CONNECT` and `STOMP`. Assert rejected cases receive an ERROR or transport close, no `SessionConnectEvent`/CONNECTED frame, and never call `markVerified`; accepted cases expose the expected Principal and call `markVerified` synchronously. Add valid and invalid single-WebSocket-message pipelines containing `CONNECT + SEND/SUBSCRIBE`, proving follow-on frames cannot outrun or bypass handshake authentication and captured framework/application logs never contain the submitted UUID.
 
 - [ ] **Step 4: Implement synchronous STOMP authentication**
 
-  Extract the interceptor as a named bean/class for focused testing. Enable `registry.setPreserveReceiveOrder(true)` so decoded frames from one WebSocket are handled serially. For either connection command, call `CanonicalUuidValidator.isCanonical(uuid)`, perform `userRepository.existsById(uuid)`, then call `accessor.setUser(new StompPrincipal(uuid))` and `markVerified(uuid)`. For every later non-heartbeat client command, require the propagated authenticated Principal and reject its absence with the same generic `MessagingException("Invalid connection identity")`. Never echo the header.
+  Extract the interceptor as a named bean/class for focused testing. Configure `registration.taskExecutor().corePoolSize(1).maxPoolSize(1)` on the inbound channel so application/broker handlers consume frames FIFO. Do not enable `setPreserveReceiveOrder(true)`: Spring 6.2.16's `OrderedMessageChannelDecorator` catches interceptor exceptions and logs the full credential-bearing message instead of propagating rejection to `StompSubProtocolHandler`. For either connection command, call `CanonicalUuidValidator.isCanonical(uuid)`, perform `userRepository.existsById(uuid)`, then call `accessor.setUser(new StompPrincipal(uuid))` and `markVerified(uuid)` synchronously; Spring's user-change callback updates its server-side session before the next decoded frame is submitted. For every later non-heartbeat client command, require that propagated authenticated Principal and reject its absence with the same generic `MessagingException("Invalid connection identity")`. Never echo the header.
 
 - [ ] **Step 5: Simplify lifecycle listener and verification lifetime**
 
@@ -435,7 +440,7 @@ Tasks 4–6 are one atomic implementation work package owned by one subagent bec
 
 - [ ] **Step 6: Add raw-frame and deterministic multi-session integration tests**
 
-  Send an invalid raw `STOMP` frame followed in the same socket write by `SEND` and `SUBSCRIBE`; assert no registry session, count change, bank, application invocation, subscription, or pixel broadcast. Add reconnect-after-cache-clear, blocked-downstream-after-validation, disconnect-retains-verification, and valid pipelined-frame cases. For two sessions, do not wait for STOMP receipts because the configured simple broker does not emit them. With receive-order preservation enabled, have each session subscribe first to `/user/queue/bank`, then to `/app/bank`; receipt of that session's concrete `/app/bank` initial response is the barrier proving its earlier broker subscription was processed. Also wait for registry state one user/two sessions with both subscriptions present before recording the baselines. Call `earnPoints`, assert exactly one `balance + 1` message on each and no extra; disconnect one and await one session, tick and assert only survivor advances; disconnect final, await no user, tick and assert no earning. Set a long scheduler interval in this test.
+  Send an invalid raw `STOMP` frame followed in the same socket write by `SEND` and `SUBSCRIBE`; assert ERROR/close, no `SessionConnectEvent`, registry session, count change, bank, application invocation, subscription, pixel broadcast, or credential-bearing log. Add reconnect-after-cache-clear, blocked-downstream-after-validation, disconnect-retains-verification, and valid pipelined-frame cases. For two sessions, do not wait for STOMP receipts because the configured simple broker does not emit them. With the single-worker inbound executor, have each session subscribe first to `/user/queue/bank`, then to `/app/bank`; receipt of that session's concrete `/app/bank` initial response is the barrier proving its earlier broker subscription was processed. Also wait for registry state one user/two sessions with both subscriptions present before recording the baselines. Call `earnPoints`, assert exactly one `balance + 1` message on each and no extra; disconnect one and await one session, tick and assert only survivor advances; disconnect final, await no user, tick and assert no earning. Set a long scheduler interval in this test.
 
 - [ ] **Step 7: Run WebSocket/banking tests and commit**
 
