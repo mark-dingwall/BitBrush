@@ -37,6 +37,7 @@
 ## File Structure and Ownership
 
 - `config/PinProperties.java` defines credential and throttle configuration only.
+- `config/PinPepperDecoder.java` is the single strict Base64/minimum-length boundary shared by runtime startup policy and Flyway backfill.
 - `service/PinCredentialCodec.java` contains deterministic canonicalization, HMAC, Argon2 encoding/verification, and legacy PIN derivation shared by runtime and migration.
 - `service/PinCredentialService.java` is the sole application-facing credential service and owns the fair global permit pool and dummy verification hash.
 - `service/RecoveryAttemptService.java` owns atomic rolling-window state only.
@@ -54,6 +55,7 @@
 **Files:**
 - Modify: `build.gradle.kts`
 - Create: `src/main/java/au/com/dingwall/mark/bitbrush/config/PinProperties.java`
+- Create: `src/main/java/au/com/dingwall/mark/bitbrush/config/PinPepperDecoder.java`
 - Create: `src/main/java/au/com/dingwall/mark/bitbrush/config/PinProductionPolicy.java`
 - Create: `src/main/java/au/com/dingwall/mark/bitbrush/service/PinCredentialCodec.java`
 - Create: `src/main/java/au/com/dingwall/mark/bitbrush/service/PinCredentialService.java`
@@ -64,6 +66,7 @@
 - Modify: `src/main/resources/application-docker.properties`
 - Modify: `src/main/resources/application-prod.properties`
 - Test: `src/test/java/au/com/dingwall/mark/bitbrush/config/PinPropertiesTest.java`
+- Test: `src/test/java/au/com/dingwall/mark/bitbrush/config/PinPepperDecoderTest.java`
 - Test: `src/test/java/au/com/dingwall/mark/bitbrush/config/PinProductionPolicyTest.java`
 - Test: `src/test/java/au/com/dingwall/mark/bitbrush/service/PinCredentialCodecTest.java`
 - Test: `src/test/java/au/com/dingwall/mark/bitbrush/service/PinCredentialServiceTest.java`
@@ -72,9 +75,9 @@
 - Consumes: Base64 `PIN_PEPPER`; UTF-16 Java strings at the trust boundary.
 - Produces: `PinCredentialCodec.CanonicalPin`, `canonicalize(String)`, `hash(CanonicalPin)`, `verify(CanonicalPin, String)`, and `deriveLegacyPin(String)`; application facade `canonicalize`, `hash`, `verify`, `verifyDummy`, and `matchesConfirmation`.
 
-- [ ] **Step 1: Add failing canonicalization and derivation tests**
+- [ ] **Step 1: Add failing canonicalization, pepper-decoding, and derivation tests**
 
-  Create parameterized cases for ASCII, `A😀b!`, mixed scripts, case differences, NFC composed/decomposed input, and each replaced category. Add explicit assertions for leading/trailing spaces, three/five post-normalization code points, null/empty/over-256 input, and isolated high/low surrogates. Define the stable interface in the test:
+  Create parameterized cases for ASCII, `A😀b!`, mixed scripts, case differences, NFC composed/decomposed input, and each replaced category. Add explicit assertions for leading/trailing spaces, three/five post-normalization code points, null/empty/over-256 input, and isolated high/low surrogates. Test the shared pepper decoder with valid 32-byte and longer values plus missing, malformed, and under-32-byte input. Define the stable interface in the test:
 
   ```java
   PinCredentialCodec codec = new PinCredentialCodec(pepperBytes, 32, 1, 1, 32);
@@ -86,7 +89,7 @@
 
 - [ ] **Step 2: Run credential tests and verify the missing types fail compilation**
 
-  Run: `./gradlew test --tests '*PinCredentialCodecTest' --tests '*PinPropertiesTest' --tests '*PinProductionPolicyTest'`
+  Run: `./gradlew test --tests '*PinCredentialCodecTest' --tests '*PinPepperDecoderTest' --tests '*PinPropertiesTest' --tests '*PinProductionPolicyTest'`
 
   Expected: FAIL because the credential types do not exist.
 
@@ -105,11 +108,14 @@
       @Min(16) int hashLength,
       @Min(1) int maxConcurrent,
       @Min(1) int retryAfterSeconds,
+      @NotNull Duration recoveryWindow,
+      @Min(1) int accountLimit,
+      @Min(1) int ipLimit,
       @Min(1) int accountCapacity,
       @Min(1) int ipCapacity) {}
   ```
 
-  `PinProductionPolicy` decodes and validates the pepper at startup for every profile. It additionally rejects memory below 19,456 KiB, iterations below 2, parallelism below 1, hash length below 32, or concurrency above 2 when either `prod` or `docker` is active; this permits cheap explicit test parameters without weakening deployed profiles. Use `19456/2/1/32/2/1/10000/10000` in docker/prod. Put a clearly labelled Base64 encoding of 32 zero bytes and cheaper work parameters only in dev/test. Docker/prod use `${PIN_PEPPER}` with no fallback and configure the same value as Flyway placeholder `pin-pepper`.
+  `PinPepperDecoder` is a pure shared boundary that strictly Base64-decodes the configured value and requires at least 32 bytes. `PinProductionPolicy` uses it at startup for every profile and also rejects a non-positive recovery window. It additionally rejects memory below 19,456 KiB, iterations below 2, parallelism below 1, hash length below 32, or concurrency above 2 when either `prod` or `docker` is active; this permits cheap explicit test parameters without weakening deployed profiles. Use production defaults `19456/2/1/32/2/1/15m/5/20/10000/10000` in docker/prod. Put a clearly labelled Base64 encoding of 32 zero bytes and cheaper work parameters only in dev/test. Docker/prod use `${PIN_PEPPER}` with no fallback and configure the same value as Flyway placeholder `pin-pepper`.
 
 - [ ] **Step 4: Implement the lower-level codec**
 
@@ -145,7 +151,7 @@
 
 - [ ] **Step 7: Run focused tests and commit**
 
-  Run: `./gradlew test --tests '*PinPropertiesTest' --tests '*PinProductionPolicyTest' --tests '*PinCredentialCodecTest' --tests '*PinCredentialServiceTest'`
+  Run: `./gradlew test --tests '*PinPropertiesTest' --tests '*PinPepperDecoderTest' --tests '*PinProductionPolicyTest' --tests '*PinCredentialCodecTest' --tests '*PinCredentialServiceTest'`
 
   Expected: PASS.
 
@@ -164,12 +170,12 @@
 - Test: `src/test/java/au/com/dingwall/mark/bitbrush/service/RecoveryAttemptServiceTest.java`
 
 **Interfaces:**
-- Consumes: `PinProperties.accountCapacity/ipCapacity` and injected `Clock`.
+- Consumes: `PinProperties.recoveryWindow/accountLimit/ipLimit/accountCapacity/ipCapacity` and injected `Clock`.
 - Produces: `recordIpAttempt(InetAddress)`, `recordAccountAttempt(String)`, and `clearAccount(String)`.
 
 - [ ] **Step 1: Write failing deterministic throttle and concurrency tests**
 
-  Use `MutableClock` and barriers. For username and IP independently assert immediately below/at/after limits, exact rolling expiry, success clearing username only, exact case sensitivity, unknown username accounting, key independence, bounded-map fail-closed behavior, and cleanup racing with checks. The concurrency assertion is:
+  Use `MutableClock` and barriers. For username and IP independently assert configured limits and window values, immediately below/at/after limits, exact rolling expiry, success clearing username only, exact case sensitivity, unknown username accounting, key independence, bounded-map fail-closed behavior with computed `Retry-After`, and cleanup racing with checks. The default-limit concurrency assertion is:
 
   ```java
   AtomicInteger accepted = new AtomicInteger();
@@ -186,7 +192,7 @@
 
 - [ ] **Step 2: Implement atomic rolling windows**
 
-  Store immutable timestamp deques in `ConcurrentHashMap.compute`; prune timestamps `<= now.minus(15 minutes)`, reject before adding when the applicable limit is already present, and compute ceiling seconds for `Retry-After`. Allocate a new key only after an atomic capacity reservation; release reservations when entries expire or are cleared. Expose package-private `cleanupExpired()` for deterministic tests and scheduled opportunistic cleanup.
+  Store immutable timestamp deques in `ConcurrentHashMap.compute`; prune timestamps `<= now.minus(recoveryWindow)`, reject before adding when the configured applicable limit is already present, and compute ceiling seconds for `Retry-After`. Allocate a new key only after an atomic capacity reservation; release reservations when entries expire or are cleared. After pruning, capacity exhaustion computes its generic `RecoveryCapacityException.retryAfterSeconds` from the earliest live entry that can free a slot, so every recovery `429` has an applicable remaining delay without disclosing the dimension. Expose package-private `cleanupExpired()` for deterministic tests and scheduled opportunistic cleanup.
 
 - [ ] **Step 3: Run focused tests and commit**
 
@@ -236,6 +242,8 @@
 
 ### Task 4: Private/Public Identity Persistence and Canvas Authorship
 
+Tasks 4–6 are one atomic implementation work package owned by one subagent because they share the `User` shape and registration cutover. Do not commit or hand off the transient Task 4/5 state; make the first checkpoint commit only after Task 6 has replaced the HTTP path and updated every affected fixture.
+
 **Files:**
 - Modify: `src/main/java/au/com/dingwall/mark/bitbrush/model/User.java`
 - Modify: `src/main/java/au/com/dingwall/mark/bitbrush/model/Pixel.java`
@@ -245,6 +253,7 @@
 - Modify: `src/main/java/au/com/dingwall/mark/bitbrush/dto/PixelInfoResponse.java`
 - Create: `src/main/java/au/com/dingwall/mark/bitbrush/service/AuthorIdGenerator.java`
 - Modify: `src/main/java/au/com/dingwall/mark/bitbrush/service/PixelService.java`
+- Modify: `src/main/java/au/com/dingwall/mark/bitbrush/exception/UserNotFoundException.java`
 - Modify: related existing pixel/canvas/repository tests
 
 **Interfaces:**
@@ -253,7 +262,7 @@
 
 - [ ] **Step 1: Expand repository tests before entities**
 
-  Build users with all five fields and assert exact-case `findByUsername`, `existsByAuthorId`, non-null fields, and unique username/private UUID/public ID. Add pixel repository tests proving current-author queries use public `authorId` and still work for UUID-shaped legacy author IDs.
+  Build users with all five fields and assert exact-case `findByUsername`, `findByAuthorId`, `existsByAuthorId`, non-null fields, and unique username/private UUID/public ID. For the assigned-ID regression, `saveAndFlush` the first row, clear the `EntityManager`, then persist a second newly constructed entity with the same UUID so the assertion reaches the database primary-key constraint rather than Hibernate's same-context identity check; verify the first row is unchanged. Add pixel repository tests proving current-author queries use public `authorId` and still work for UUID-shaped legacy author IDs.
 
 - [ ] **Step 2: Modify entities and repositories**
 
@@ -261,6 +270,7 @@
 
   ```java
   Optional<User> findByUsername(String username);
+  Optional<User> findByAuthorId(String authorId);
   boolean existsByUsername(String username);
   boolean existsByAuthorId(String authorId);
   List<User> findAllByPinBackfilledTrueOrderByUsernameAsc();
@@ -272,22 +282,19 @@
 
 - [ ] **Step 4: Write failing pixel-service privacy tests**
 
-  Given a request containing a private UUID and a repository user with `authorId`, assert saved pixels, broadcasts, info responses, and author-highlight queries contain only the public ID. Assert a public author ID supplied as bearer input fails lookup and writes/deducts nothing. Capture debug logs and assert private UUID absence.
+  Given a request containing a private UUID and a repository user with `authorId`, assert saved pixels, broadcasts, info responses, and author-highlight queries contain only the public ID. Assert `getPixelInfo` resolves usernames through `findByAuthorId` for both new `author_…` IDs and UUID-shaped migrated public IDs. Assert a public author ID supplied as bearer input fails lookup and writes/deducts nothing. Capture debug logs and assert private UUID absence.
 
 - [ ] **Step 5: Refactor `PixelService` to resolve once and persist public authorship**
 
-  Replace `existsById` with `findById(request.authorUuid()).orElseThrow(() -> new UserNotFoundException(request.authorUuid()))`, perform it before banking deduction, then use `user.getAuthorId()` for `Pixel.authorId`, `PixelBroadcast.authorId`, username resolution, and current-author query. Remove credential-bearing log arguments. Retain `userExists` and `registerUser` temporarily so the unchanged controller compiles; Task 6 removes them atomically with their final callers.
+  Replace `existsById` with `findById(request.authorUuid()).orElseThrow(UserNotFoundException::new)`, perform it before banking deduction, then use `user.getAuthorId()` for `Pixel.authorId`, `PixelBroadcast.authorId`, and current-author query; reverse-resolve stored pixel authors for info responses with `findByAuthorId`. In this task change `UserNotFoundException` to a constant-detail, no-argument exception so the transient implementation cannot log or render a private UUID. Remove credential-bearing log arguments. Retain `userExists` and `registerUser` only as compile-time bridges while the same work-package owner continues immediately through Tasks 5–6; do not deploy, commit, or run the old registration integration path in this transient state.
 
-- [ ] **Step 6: Run repository and canvas tests and commit**
+- [ ] **Step 6: Run focused repository and canvas tests**
 
-  Run: `./gradlew test --tests '*UserRepositoryTest' --tests '*PixelRepositoryTest' --tests '*PixelServiceTest' --tests '*PixelController*' --tests '*CanvasController*' --tests '*StatsController*'`
+  Run: `./gradlew test --tests '*UserRepositoryTest' --tests '*PixelRepositoryTest' --tests '*PixelServiceTest' --tests '*CanvasController*' --tests '*StatsController*'`
 
   Expected: PASS.
 
-  ```bash
-  git add src/main/java src/test/java
-  git commit -m "feat: separate private and public user identifiers"
-  ```
+  Do not commit: continue with the same worktree and owner through Tasks 5–6.
 
 ### Task 5: Identity Workflow Service
 
@@ -333,16 +340,13 @@
 
   Canonicalize PIN before expensive work. Use exact-case `findByUsername`. Run real or dummy verification through `PinCredentialService`; never include username, UUID, PIN, or hash in exception text. Retain existing `TurnstileService.verify` and `markVerified`; remove `verifyAndRemember` only after all callers have migrated.
 
-- [ ] **Step 6: Run service tests and commit**
+- [ ] **Step 6: Run focused service tests**
 
   Run: `./gradlew test --tests '*UserIdentityServiceTest' --tests '*PixelServiceTest' --tests '*TurnstileServiceTest'`
 
   Expected: PASS.
 
-  ```bash
-  git add src/main/java src/test/java
-  git commit -m "feat: add user identity workflows"
-  ```
+  Do not commit: continue with the same worktree and owner through Task 6.
 
 ### Task 6: Identity HTTP Contracts, Errors, and Secret-Safe Logging
 
@@ -351,7 +355,6 @@
 - Delete: `src/main/java/au/com/dingwall/mark/bitbrush/dto/UserRegistrationRequest.java`
 - Modify: `src/main/java/au/com/dingwall/mark/bitbrush/service/PixelService.java`
 - Modify: `src/main/java/au/com/dingwall/mark/bitbrush/exception/GlobalExceptionHandler.java`
-- Modify: `src/main/java/au/com/dingwall/mark/bitbrush/exception/UserNotFoundException.java`
 - Modify: `src/main/java/au/com/dingwall/mark/bitbrush/controller/PixelController.java`
 - Test: `src/test/java/au/com/dingwall/mark/bitbrush/controller/UserControllerSliceTest.java`
 - Modify: `src/test/java/au/com/dingwall/mark/bitbrush/controller/UserControllerTest.java`
@@ -369,11 +372,11 @@
 
 - [ ] **Step 2: Implement the thin controller**
 
-  Inject only `UserIdentityService` and `ClientIpResolver`. Return `ResponseEntity<UserIdentityResponse>`; pass the Turnstile header to create/recover and resolve IP only for recovery. Do not log request DTOs or identity response values. In this same step delete `UserRegistrationRequest`, remove the now-unused `PixelService.userExists/registerUser` methods, and replace their old `PixelServiceTest` cases with identity-service coverage so no intermediate commit has dangling callers.
+  Inject only `UserIdentityService` and `ClientIpResolver`. Return `ResponseEntity<UserIdentityResponse>`; pass the Turnstile header to create/recover and resolve IP only for recovery. Do not log request DTOs or identity response values. In this same step delete `UserRegistrationRequest`, remove the now-unused `PixelService.userExists/registerUser` methods, replace their old `PixelServiceTest` cases with identity-service coverage, and update every controller/integration fixture selected by this task to create a complete user through the new identity API or persist a complete five-field fixture directly. No compatibility path may create a PIN-less user.
 
 - [ ] **Step 3: Test and implement generic errors**
 
-  Map duplicate identity to 409; invalid credentials to generic title `Unauthorized` and detail `Invalid username or PIN`; recovery throttle to 429 and computed `Retry-After`; map capacity to generic 429; PIN capacity to 503 and `Retry-After: 1`; invalid PIN to 400; retain Turnstile 403 and balance 402. Change `UserNotFoundException` to a constant detail so it never embeds the submitted credential.
+  Map duplicate identity to 409; invalid credentials to generic title `Unauthorized` and detail `Invalid username or PIN`; recovery throttle and map capacity to generic 429 responses carrying their computed `Retry-After`; PIN capacity to 503 and its configured short `Retry-After`; invalid PIN to 400; retain Turnstile 403 and balance 402. Retain Task 4's constant-detail `UserNotFoundException` behavior in the HTTP mapping.
 
 - [ ] **Step 4: Add captured-log privacy tests and remove sensitive logging**
 
@@ -381,13 +384,13 @@
 
 - [ ] **Step 5: Run HTTP/privacy tests and commit**
 
-  Run: `./gradlew test --tests '*UserController*' --tests '*GlobalExceptionHandlerTest' --tests '*SensitiveDataLoggingTest'`
+  Run: `./gradlew test --tests '*UserController*' --tests '*PixelController*' --tests '*GlobalExceptionHandlerTest' --tests '*SensitiveDataLoggingTest'`
 
   Expected: PASS.
 
   ```bash
   git add src/main/java src/test/java
-  git commit -m "feat: expose secure identity APIs"
+  git commit -m "feat: add secure identity persistence and APIs"
   ```
 
 ### Task 7: Authenticated STOMP Lifecycle and Multi-Session Banking
@@ -398,6 +401,7 @@
 - Modify: `src/main/java/au/com/dingwall/mark/bitbrush/service/BankingService.java`
 - Modify: `src/main/java/au/com/dingwall/mark/bitbrush/service/TurnstileService.java`
 - Modify: `src/test/java/au/com/dingwall/mark/bitbrush/service/BankingServiceTest.java`
+- Modify: `src/test/java/au/com/dingwall/mark/bitbrush/controller/PixelControllerTest.java`
 - Modify: `src/test/java/au/com/dingwall/mark/bitbrush/websocket/WebSocketIntegrationTest.java`
 
 **Interfaces:**
@@ -426,11 +430,13 @@
 
 - [ ] **Step 6: Add raw-frame and deterministic multi-session integration tests**
 
-  Send an invalid raw `STOMP` frame followed in the same socket write by `SEND`; assert no registry session, count change, bank, application invocation, or pixel broadcast. Add reconnect-after-cache-clear, blocked-downstream-after-validation, and disconnect-retains-verification cases. For two sessions: wait for both subscription receipts and registry state one user/two sessions, drain initial messages, call `earnPoints`, assert exactly one `balance + 1` message on each and no extra; disconnect one and await one session, tick and assert only survivor advances; disconnect final, await no user, tick and assert no earning. Set a long scheduler interval in this test.
+  Send an invalid raw `STOMP` frame followed in the same socket write by `SEND`; assert no registry session, count change, bank, application invocation, or pixel broadcast. Add reconnect-after-cache-clear, blocked-downstream-after-validation, and disconnect-retains-verification cases. For two sessions, do not wait for STOMP receipts because the configured simple broker does not emit them. Instead, use a test listener/latch for each `SessionSubscribeEvent` on `/user/queue/bank`, wait for registry state one user/two sessions with both subscriptions present, and await each concrete `/app/bank` initial reply before recording the baseline. Call `earnPoints`, assert exactly one `balance + 1` message on each and no extra; disconnect one and await one session, tick and assert only survivor advances; disconnect final, await no user, tick and assert no earning. Set a long scheduler interval in this test.
 
 - [ ] **Step 7: Run WebSocket/banking tests and commit**
 
-  Run: `./gradlew test --tests '*BankingServiceTest' --tests '*WebSocketIntegrationTest'`
+  Replace `PixelControllerTest`'s manual `onUserConnect/onUserDisconnect` setup with `ensureBank`, remove obsolete session constants/cleanup, and keep its isolated bank cases explicit.
+
+  Run: `./gradlew test --tests '*BankingServiceTest' --tests '*PixelControllerTest' --tests '*WebSocketIntegrationTest'`
 
   Expected: PASS without timing sleeps used as correctness gates.
 
@@ -458,11 +464,11 @@
 
 - [ ] **Step 2: Add migration SQL shells and implement Java backfill**
 
-  V2 renames `pixels.author_uuid` to `author_id` and adds nullable user columns. V3 iterates users in stable order using JDBC, assigns old UUID to author ID, chooses random canonical UUID absent from both ID columns, derives four digits from stable author ID, hashes via the same `PinCredentialCodec`, and updates with `pin_backfilled=true`. V4 sets defaults for new `pin_backfilled=false`, adds `NOT NULL`, and names `pk_users_uuid`, `uk_users_username`, and `uk_users_author_id`. Do no filesystem I/O in migrations.
+  V2 renames `pixels.author_uuid` to `author_id` and adds nullable user columns. Before reading or mutating any row, V3 passes the `pin-pepper` placeholder through Task 1's shared `PinPepperDecoder`; missing, malformed, or decoded values shorter than 32 bytes fail the migration. V3 then iterates users in stable order using JDBC, assigns old UUID to author ID, chooses random canonical UUID absent from both ID columns, derives four digits from stable author ID, hashes via the same `PinCredentialCodec`, and updates with `pin_backfilled=true`. V4 sets defaults for new `pin_backfilled=false`, adds `NOT NULL`, and names `pk_users_uuid`, `uk_users_username`, and `uk_users_author_id`. Do no filesystem I/O in migrations.
 
 - [ ] **Step 3: Extend migration tests for retry/idempotence and adversarial bearer paths**
 
-  Force UUID collisions, verify legacy PIN derivation stability/domain/pepper changes and lack of modulo bias via controlled digests, run Flyway again without changing hashes, and cover an empty V1 database. Start the migrated application and prove the old UUID-shaped public ID fails reconnect, placement, `CONNECT`, and `STOMP`, while recovery returns the rotated UUID and that value succeeds through every path.
+  Force UUID collisions, verify legacy PIN derivation stability/domain/pepper changes and lack of modulo bias via controlled digests, run Flyway again without changing hashes, and cover an empty V1 database. Test missing, malformed, and under-32-byte pepper placeholders and assert V3 fails before row mutation and V4 is not applied. Capture verbose Flyway/application logs with unique pepper, derived-PIN, and encoded-hash markers and assert none appears. Start the migrated application and prove the old UUID-shaped public ID fails reconnect, placement, `CONNECT`, and `STOMP`, while recovery returns the rotated UUID and that value succeeds through every path. Run the real concurrent duplicate-UUID and duplicate-username request races here against the named PostgreSQL V4 constraints; keep H2 full-context tests for non-racing workflows.
 
 - [ ] **Step 4: Add CI migration enforcement and run the migration test**
 
@@ -531,6 +537,7 @@
 - Create: `e2e/fixtures/widget-host.html`
 - Create: `e2e/tests/local-harness.spec.ts`
 - Modify: `e2e/package.json`
+- Modify: `e2e/playwright.config.ts`
 
 **Interfaces:**
 - Consumes: current static resources and external script/API URLs.
@@ -655,7 +662,6 @@
 **Files:**
 - Modify: `e2e/tests/bitbrush-widget.spec.ts`
 - Modify: `e2e/package.json`
-- Modify: `e2e/playwright.config.ts`
 
 **Interfaces:**
 - Consumes: provisioned `BITBRUSH_E2E_UUID` and deployed `/api/users/reconnect`.
@@ -694,7 +700,7 @@
 
 - [ ] **Step 1: Add full Spring identity sequences**
 
-  With real repositories and cheap test Argon2 parameters, execute create→reconnect and create→recover→place-pixel. Assert Turnstile/verification ordering, authoritative username, same recovered private UUID, retained in-memory bank within process lifetime, and public-only pixel info/broadcasts. Add concurrent creates for duplicate UUID and username and assert one success plus one 409.
+  With real repositories and cheap test Argon2 parameters, execute create→reconnect and create→recover→place-pixel. Assert Turnstile/verification ordering, authoritative username, same recovered private UUID, retained in-memory bank within process lifetime, and public-only pixel info/broadcasts. The real named-constraint concurrency races run against PostgreSQL in Task 8; do not duplicate them against Hibernate-generated H2 constraint names here.
 
 - [ ] **Step 2: Deliberately update every old user fixture**
 
@@ -716,7 +722,7 @@
 
 - [ ] **Step 5: Update architecture and operator documentation**
 
-  Document three endpoints, local storage containing UUID/username only, public author IDs, process-local throttle assumption, `PIN_PEPPER` generation/backup and loss consequences, Argon2 calibration values, `PIN_BACKFILL_EXPORT_PATH`, protected retrieval/deletion order, `BITBRUSH_E2E_UUID`, immediate deployment strategy, PostgreSQL backup, and roll-forward-only corrective rollback after V4. Update Docker/Fly configuration to require the pepper without committing one.
+  Document three endpoints, local storage containing UUID/username only, public author IDs, process-local throttle assumption, `PIN_PEPPER` generation/backup and loss consequences, Argon2 calibration values, `PIN_BACKFILL_EXPORT_PATH`, protected retrieval/deletion order, `BITBRUSH_E2E_UUID`, immediate deployment strategy, PostgreSQL backup, and roll-forward-only corrective rollback after V4. Update Docker/Fly configuration to require the pepper without committing one, and set and verify `[deploy] strategy = "immediate"` in `fly.toml` so rollout safety is enforced rather than left as prose.
 
 - [ ] **Step 6: Build the production container and run local browser checks**
 
