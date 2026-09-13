@@ -17,6 +17,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static au.com.dingwall.mark.bitbrush.VerificationCacheTestSupport.clearVerification;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doReturn;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -42,8 +43,6 @@ class UserControllerTest {
 
     @AfterEach
     void cleanUp() {
-        bank.onUserDisconnect(uuid);
-        users.findAll().forEach(user -> turnstile.removeVerified(user.getUuid()));
         pixels.deleteAll();
         users.deleteAll();
     }
@@ -52,7 +51,7 @@ class UserControllerTest {
     void createThenReconnectReturnsTheStoredUsernameAndRestoresVerification() throws Exception {
         create(uuid, "Artist", "A😀b!", "A😀b!");
         assertTrue(turnstile.isVerified(uuid));
-        turnstile.removeVerified(uuid);
+        clearVerification(turnstile);
         doReturn(false).when(turnstile).verify(any());
         mvc.perform(post("/api/users/reconnect").contentType(MediaType.APPLICATION_JSON)
                 .content(mapper.writeValueAsBytes(new UserReconnectRequest(uuid))))
@@ -69,7 +68,7 @@ class UserControllerTest {
         create(uuid, "Artist", "e\u0301x😀!", "éx😀!");
         var user = users.findById(uuid).orElseThrow();
         assertTrue(user.getAuthorId().matches("author_[A-Za-z0-9_-]{32}"));
-        turnstile.removeVerified(uuid);
+        clearVerification(turnstile);
         String response = mvc.perform(post("/api/users/recover").contentType(MediaType.APPLICATION_JSON)
                 .header("X-Turnstile-Token", "token")
                 .content(mapper.writeValueAsBytes(new UserRecoveryRequest("Artist", "éx😀!"))))
@@ -81,7 +80,7 @@ class UserControllerTest {
         String recovered = mapper.readTree(response).get("uuid").asText();
         assertTrue(uuid.equals(recovered), "Recovered identity mismatch");
         assertTrue(turnstile.isVerified(recovered));
-        bank.onUserConnect(recovered, "identity-integration-session");
+        bank.ensureBank(recovered);
         mvc.perform(post("/api/pixels").contentType(MediaType.APPLICATION_JSON)
                 .content(mapper.writeValueAsBytes(new PixelPlacementRequest(
                     java.util.List.of(new PixelCoordinate(4, 6)), 7, recovered))))
@@ -115,7 +114,7 @@ class UserControllerTest {
     @Test
     void wrongAndUnknownCredentialsHaveTheSamePublicFailure() throws Exception {
         create(uuid, "Artist", "1234", "1234");
-        turnstile.removeVerified(uuid);
+        clearVerification(turnstile);
         String wrong = failedRecovery("Artist", "abcd");
         String unknown = failedRecovery("artist", "abcd");
         assertEquals(wrong, unknown);

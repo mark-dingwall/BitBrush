@@ -6,6 +6,7 @@ import au.com.dingwall.mark.bitbrush.exception.InsufficientBalanceException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.messaging.simp.user.SimpUserRegistry;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -24,9 +25,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * <ul>
  *   <li>bankMap: ConcurrentHashMap&lt;uuid, BankState&gt; — compute() used for
  *       all mutations so check-and-mutate is atomic.
- *   <li>uuidToSessionId: ConcurrentHashMap&lt;uuid, sessionId&gt; — tracks
- *       connected users; only connected UUIDs earn points. Disconnect removes
- *       the entry so the @Scheduled earn task skips them.
+ *   <li>SimpUserRegistry supplies connected users once per principal, regardless
+ *       of their number of sessions. Disconnected users retain their bank.
  * </ul>
  */
 @Service
@@ -49,16 +49,15 @@ public class BankingService {
 
     // uuid -> bank state (all users who have ever connected)
     private final ConcurrentHashMap<String, BankState> bankMap = new ConcurrentHashMap<>();
-    // uuid -> sessionId (connected users only; disconnect removes entry — freeze-on-disconnect)
-    private final ConcurrentHashMap<String, String> uuidToSessionId = new ConcurrentHashMap<>();
-
     private final SimpMessagingTemplate messagingTemplate;
     private final BitbrushProperties bitbrushProperties;
+    private final SimpUserRegistry simpUserRegistry;
 
     public BankingService(SimpMessagingTemplate messagingTemplate,
-                          BitbrushProperties bitbrushProperties) {
+                          BitbrushProperties bitbrushProperties, SimpUserRegistry simpUserRegistry) {
         this.messagingTemplate = messagingTemplate;
         this.bitbrushProperties = bitbrushProperties;
+        this.simpUserRegistry = simpUserRegistry;
     }
 
     /**
@@ -66,21 +65,8 @@ public class BankingService {
      * Initializes bank entry at startingBalance (from config) for new users; retains existing
      * balance for reconnecting users (resume where left off).
      */
-    public void onUserConnect(String userUuid, String sessionId) {
-        uuidToSessionId.put(userUuid, sessionId);
-        bankMap.computeIfAbsent(userUuid, k -> new BankState(bitbrushProperties.placement().startingBalance(), Instant.now()));
-        log.debug("User connected: uuid={}, sessionId={}, balance={}",
-            userUuid, sessionId, bankMap.get(userUuid).balance());
-    }
-
-    /**
-     * Called by WebSocketEventListener when a user disconnects.
-     * Removes from uuidToSessionId so the earn task skips this user (freeze-on-disconnect).
-     * BankState is retained in bankMap for resumption on reconnect.
-     */
-    public void onUserDisconnect(String userUuid) {
-        uuidToSessionId.remove(userUuid);
-        log.debug("User disconnected: uuid={} — earn task will skip until reconnect", userUuid);
+    public void ensureBank(String principalName) {
+        bankMap.computeIfAbsent(principalName, k -> new BankState(bitbrushProperties.placement().startingBalance(), Instant.now()));
     }
 
     /**
@@ -107,8 +93,7 @@ public class BankingService {
         }
         // Push updated balance AFTER compute() returns (must not call sendToUser inside compute)
         pushBankState(userUuid);
-        log.debug("Point deducted: uuid={}, new balance={}",
-            userUuid, bankMap.getOrDefault(userUuid, new BankState(0, Instant.now())).balance());
+        log.debug("Point deducted");
     }
 
     /**
@@ -145,13 +130,8 @@ public class BankingService {
             int earnRate = bitbrushProperties.placement().earnRateSeconds();
             return new BankStateResponse(bitbrushProperties.placement().startingBalance(), maxBanked, earnRate);
         }
-        BankState state = bankMap.get(userUuid);
-        if (state == null) {
-            int maxBanked = bitbrushProperties.placement().maxBanked();
-            int earnRate = bitbrushProperties.placement().earnRateSeconds();
-            return new BankStateResponse(bitbrushProperties.placement().startingBalance(), maxBanked, earnRate);
-        }
-        return buildResponse(state);
+        ensureBank(userUuid);
+        return buildResponse(bankMap.get(userUuid));
     }
 
     /**
@@ -161,14 +141,15 @@ public class BankingService {
      * NOTE: fixedDelayString in milliseconds — "${bitbrush.placement.earn-rate-seconds}000"
      * appends "000" to the property string value (e.g. "3" -&gt; "3000" = 3 seconds).
      *
-     * Only connected users earn (uuidToSessionId keySet = connected UUIDs).
+     * Only connected registry users earn, once per principal across all sessions.
      * Users already at maxBanked are skipped.
      * STOMP push fires only when balance actually changes.
      */
     @Scheduled(fixedDelayString = "${bitbrush.placement.earn-rate-seconds}000")
     public void earnPoints() {
         int maxBanked = bitbrushProperties.placement().maxBanked();
-        uuidToSessionId.keySet().forEach(uuid -> {
+        simpUserRegistry.getUsers().forEach(user -> {
+            String uuid = user.getName();
             boolean[] earned = {false};
             bankMap.compute(uuid, (k, state) -> {
                 if (state == null || state.balance() >= maxBanked) return state;
@@ -176,21 +157,20 @@ public class BankingService {
                 return state.withBalance(state.balance() + 1).withLastEarnedAt(Instant.now());
             });
             if (earned[0]) {
-                log.debug("Point earned: uuid={}", uuid);
+                log.debug("Point earned");
                 pushBankState(uuid);
             }
         });
     }
 
     private void pushBankState(String userUuid) {
-        if (!uuidToSessionId.containsKey(userUuid)) return;
         BankState state = bankMap.get(userUuid);
         if (state == null) return;
         BankStateResponse response = buildResponse(state);
         // Use UUID (the Principal name set by WebSocketConfig's ChannelInterceptor)
         // NOT the session ID — SimpUserRegistry tracks users by Principal name.
         messagingTemplate.convertAndSendToUser(userUuid, "/queue/bank", response);
-        log.debug("Pushed bank state: uuid={}, balance={}", userUuid, response.balance());
+        log.debug("Pushed bank state: balance={}", response.balance());
     }
 
     private BankStateResponse buildResponse(BankState state) {

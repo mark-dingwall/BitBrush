@@ -52,26 +52,25 @@ class PixelControllerTest {
     @MockitoBean
     private TurnstileService turnstileService;
 
-    private static final String TEST_UUID = "644c25a4-2f9c-4778-a9ca-1be4e903c202";
+    private String testUuid;
     private static final String TEST_USERNAME = "pixeltester";
-    private static final String TEST_SESSION = "test-session-ctrl";
 
     @BeforeEach
     void registerTestUser() throws Exception {
+        testUuid = java.util.UUID.randomUUID().toString();
         when(turnstileService.verify(any())).thenReturn(true);
         when(turnstileService.isVerified(any())).thenReturn(true);
         mockMvc.perform(post("/api/users")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
                         {"uuid": "%s", "username": "%s", "pin": "1234", "pinConfirmation": "1234"}
-                        """.formatted(TEST_UUID, TEST_USERNAME)))
+                        """.formatted(testUuid, TEST_USERNAME)))
                 .andExpect(status().isCreated());
-        bankingService.onUserConnect(TEST_UUID, TEST_SESSION);
+        bankingService.ensureBank(testUuid);
     }
 
     @AfterEach
     void cleanUp() {
-        bankingService.onUserDisconnect(TEST_UUID);
         pixelRepository.deleteAll();
         userRepository.deleteAll();
     }
@@ -86,7 +85,7 @@ class PixelControllerTest {
                           "paletteIndex": 42,
                           "authorUuid": "%s"
                         }
-                        """.formatted(TEST_UUID)))
+                        """.formatted(testUuid)))
                 .andExpect(status().isCreated());
     }
 
@@ -100,7 +99,7 @@ class PixelControllerTest {
                           "paletteIndex": 0,
                           "authorUuid": "%s"
                         }
-                        """.formatted(TEST_UUID)))
+                        """.formatted(testUuid)))
                 .andExpect(status().isBadRequest());
     }
 
@@ -114,7 +113,7 @@ class PixelControllerTest {
                           "paletteIndex": 216,
                           "authorUuid": "%s"
                         }
-                        """.formatted(TEST_UUID)))
+                        """.formatted(testUuid)))
                 .andExpect(status().isBadRequest());
     }
 
@@ -162,13 +161,13 @@ class PixelControllerTest {
                           "paletteIndex": 10,
                           "authorUuid": "%s"
                         }
-                        """.formatted(TEST_UUID)))
+                        """.formatted(testUuid)))
                 .andExpect(status().isCreated());
 
         // When/Then: GET /api/pixels/5/7/info returns author info
         mockMvc.perform(get("/api/pixels/5/7/info"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.authorId").value(userRepository.findById(TEST_UUID).orElseThrow().getAuthorId()))
+                .andExpect(jsonPath("$.authorId").value(userRepository.findById(testUuid).orElseThrow().getAuthorId()))
                 .andExpect(jsonPath("$.username").value(TEST_USERNAME))
                 .andExpect(jsonPath("$.placedAt").isNotEmpty())
                 .andExpect(jsonPath("$.authorPixels").isArray())
@@ -187,107 +186,96 @@ class PixelControllerTest {
 
     @Test
     void getPixelInfo_afterErase_returns404() throws Exception {
-        // Use isolated UUID to avoid depleting shared TEST_UUID balance
+        // Use isolated UUID to avoid depleting shared testUuid balance
         String eraserUuid = "644c25a4-2f9c-4778-a9ca-1be4e903c203";
-        String eraserSession = "test-session-eraser-info";
         mockMvc.perform(post("/api/users")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
                         {"uuid": "%s", "username": "erasertester1", "pin": "1234", "pinConfirmation": "1234"}
                         """.formatted(eraserUuid)))
                 .andExpect(status().isCreated());
-        bankingService.onUserConnect(eraserUuid, eraserSession);
+        bankingService.ensureBank(eraserUuid);
 
-        try {
-            // Given: place a colored pixel at (3, 3) with paletteIndex=10
-            mockMvc.perform(post("/api/pixels")
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .content("""
-                            {
-                              "pixels": [{"x": 3, "y": 3}],
-                              "paletteIndex": 10,
-                              "authorUuid": "%s"
-                            }
-                            """.formatted(eraserUuid)))
-                    .andExpect(status().isCreated());
+        // Given: place a colored pixel at (3, 3) with paletteIndex=10
+        mockMvc.perform(post("/api/pixels")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {
+                          "pixels": [{"x": 3, "y": 3}],
+                          "paletteIndex": 10,
+                          "authorUuid": "%s"
+                        }
+                        """.formatted(eraserUuid)))
+                .andExpect(status().isCreated());
 
-            // Verify pixel info exists before erasing
-            mockMvc.perform(get("/api/pixels/3/3/info"))
-                    .andExpect(status().isOk());
+        // Verify pixel info exists before erasing
+        mockMvc.perform(get("/api/pixels/3/3/info"))
+                .andExpect(status().isOk());
 
-            // When: erase the pixel by placing paletteIndex=0 at (3, 3)
-            mockMvc.perform(post("/api/pixels")
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .content("""
-                            {
-                              "pixels": [{"x": 3, "y": 3}],
-                              "paletteIndex": 0,
-                              "authorUuid": "%s"
-                            }
-                            """.formatted(eraserUuid)))
-                    .andExpect(status().isCreated());
+        // When: erase the pixel by placing paletteIndex=0 at (3, 3)
+        mockMvc.perform(post("/api/pixels")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {
+                          "pixels": [{"x": 3, "y": 3}],
+                          "paletteIndex": 0,
+                          "authorUuid": "%s"
+                        }
+                        """.formatted(eraserUuid)))
+                .andExpect(status().isCreated());
 
-            // Then: pixel info should return 404 (erased = logically empty)
-            mockMvc.perform(get("/api/pixels/3/3/info"))
-                    .andExpect(status().isNotFound());
-        } finally {
-            bankingService.onUserDisconnect(eraserUuid);
-        }
+        // Then: pixel info should return 404 (erased = logically empty)
+        mockMvc.perform(get("/api/pixels/3/3/info"))
+                .andExpect(status().isNotFound());
     }
 
     @Test
     void getCanvas_erasedPixel_excluded() throws Exception {
-        // Use isolated UUID to avoid depleting shared TEST_UUID balance
+        // Use isolated UUID to avoid depleting shared testUuid balance
         String eraserUuid = "644c25a4-2f9c-4778-a9ca-1be4e903c204";
-        String eraserSession = "test-session-eraser-canvas";
         mockMvc.perform(post("/api/users")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
                         {"uuid": "%s", "username": "erasertester2", "pin": "1234", "pinConfirmation": "1234"}
                         """.formatted(eraserUuid)))
                 .andExpect(status().isCreated());
-        bankingService.onUserConnect(eraserUuid, eraserSession);
+        bankingService.ensureBank(eraserUuid);
 
-        try {
-            // Given: place a pixel at (7, 7) then erase it
-            mockMvc.perform(post("/api/pixels")
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .content("""
-                            {
-                              "pixels": [{"x": 7, "y": 7}],
-                              "paletteIndex": 42,
-                              "authorUuid": "%s"
-                            }
-                            """.formatted(eraserUuid)))
-                    .andExpect(status().isCreated());
+        // Given: place a pixel at (7, 7) then erase it
+        mockMvc.perform(post("/api/pixels")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {
+                          "pixels": [{"x": 7, "y": 7}],
+                          "paletteIndex": 42,
+                          "authorUuid": "%s"
+                        }
+                        """.formatted(eraserUuid)))
+                .andExpect(status().isCreated());
 
-            // Erase it
-            mockMvc.perform(post("/api/pixels")
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .content("""
-                            {
-                              "pixels": [{"x": 7, "y": 7}],
-                              "paletteIndex": 0,
-                              "authorUuid": "%s"
-                            }
-                            """.formatted(eraserUuid)))
-                    .andExpect(status().isCreated());
+        // Erase it
+        mockMvc.perform(post("/api/pixels")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {
+                          "pixels": [{"x": 7, "y": 7}],
+                          "paletteIndex": 0,
+                          "authorUuid": "%s"
+                        }
+                        """.formatted(eraserUuid)))
+                .andExpect(status().isCreated());
 
-            // Then: canvas state should not contain the erased coordinate
-            mockMvc.perform(get("/api/canvas"))
-                    .andExpect(status().isOk())
-                    .andExpect(jsonPath("$[?(@.x == 7 && @.y == 7)]").doesNotExist());
-        } finally {
-            bankingService.onUserDisconnect(eraserUuid);
-        }
+        // Then: canvas state should not contain the erased coordinate
+        mockMvc.perform(get("/api/canvas"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[?(@.x == 7 && @.y == 7)]").doesNotExist());
     }
 
     @Test
     void postPixelsReturns402WhenBalanceZero() throws Exception {
         // Use a fresh UUID isolated to this test so balance always starts at 5,
-        // regardless of what other tests may have deducted from TEST_UUID.
+        // regardless of what other tests may have deducted from testUuid.
         String rate402Uuid = "644c25a4-2f9c-4778-a9ca-1be4e903c205";
-        String rate402Session = "test-session-402";
 
         // Register user and connect to banking
         mockMvc.perform(post("/api/users")
@@ -296,41 +284,37 @@ class PixelControllerTest {
                         {"uuid": "%s", "username": "rate402tester", "pin": "1234", "pinConfirmation": "1234"}
                         """.formatted(rate402Uuid)))
                 .andExpect(status().isCreated());
-        bankingService.onUserConnect(rate402Uuid, rate402Session);
+        bankingService.ensureBank(rate402Uuid);
 
-        try {
-            // Spend all 5 starting points
-            for (int i = 0; i < 5; i++) {
-                mockMvc.perform(post("/api/pixels")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {
-                                  "pixels": [{"x": %d, "y": 0}],
-                                  "paletteIndex": 0,
-                                  "authorUuid": "%s"
-                                }
-                                """.formatted(i, rate402Uuid)))
-                        .andExpect(status().isCreated());
-            }
-            // 6th request — balance is 0
+        // Spend all 5 starting points
+        for (int i = 0; i < 5; i++) {
             mockMvc.perform(post("/api/pixels")
                     .contentType(MediaType.APPLICATION_JSON)
                     .content("""
                             {
-                              "pixels": [{"x": 10, "y": 10}],
+                              "pixels": [{"x": %d, "y": 0}],
                               "paletteIndex": 0,
                               "authorUuid": "%s"
                             }
-                            """.formatted(rate402Uuid)))
-                    .andExpect(status().is(402))
-                    .andExpect(result -> {
-                        String body = result.getResponse().getContentAsString();
-                        assertTrue(body.contains("retryAfterSeconds"),
-                            "Response body must contain retryAfterSeconds but was: " + body);
-                    });
-        } finally {
-            bankingService.onUserDisconnect(rate402Uuid);
+                            """.formatted(i, rate402Uuid)))
+                    .andExpect(status().isCreated());
         }
+        // 6th request — balance is 0
+        mockMvc.perform(post("/api/pixels")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {
+                          "pixels": [{"x": 10, "y": 10}],
+                          "paletteIndex": 0,
+                          "authorUuid": "%s"
+                        }
+                        """.formatted(rate402Uuid)))
+                .andExpect(status().is(402))
+                .andExpect(result -> {
+                    String body = result.getResponse().getContentAsString();
+                    assertTrue(body.contains("retryAfterSeconds"),
+                        "Response body must contain retryAfterSeconds but was: " + body);
+                });
     }
 
     @Test

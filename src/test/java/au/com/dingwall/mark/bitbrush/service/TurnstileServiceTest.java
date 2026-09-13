@@ -87,8 +87,9 @@ class TurnstileServiceTest {
         turnstileService.markVerified("uuid-1");
         assertTrue(turnstileService.isVerified("uuid-1"));
 
-        turnstileService.removeVerified("uuid-1");
-        assertFalse(turnstileService.isVerified("uuid-1"));
+        TurnstileService restarted = new TurnstileService(new TurnstileProperties("site-key", "test-secret"), restClientBuilder);
+        assertFalse(restarted.isVerified("uuid-1"));
+        assertTrue(turnstileService.isVerified("uuid-1"));
     }
 
     @Test
@@ -108,8 +109,4 @@ class TurnstileServiceTest {
         assertDoesNotThrow(() -> turnstileService.markVerified(null));
     }
 
-    @Test
-    void removeVerified_nullUuid_doesNotThrow() {
-        assertDoesNotThrow(() -> turnstileService.removeVerified(null));
-    }
 }

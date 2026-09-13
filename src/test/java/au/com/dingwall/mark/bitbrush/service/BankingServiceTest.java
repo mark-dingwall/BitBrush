@@ -5,10 +5,17 @@ import au.com.dingwall.mark.bitbrush.dto.BankStateResponse;
 import au.com.dingwall.mark.bitbrush.exception.InsufficientBalanceException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
+import org.mockito.InjectMocks;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.messaging.simp.user.SimpUser;
+import org.springframework.messaging.simp.user.SimpSession;
+import org.springframework.messaging.simp.user.SimpUserRegistry;
+import java.util.Set;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -16,8 +23,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.lenient;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.*;
+import static org.mockito.ArgumentMatchers.*;
 
 /**
  * Unit tests for BankingService (BANK-01 through BANK-05).
@@ -37,7 +44,8 @@ class BankingServiceTest {
     @Mock
     BitbrushProperties.Placement placement;
 
-    private BankingService bankingService;
+    @Mock SimpUserRegistry registry;
+    @InjectMocks private BankingService bankingService;
 
     @BeforeEach
     void setUp() {
@@ -45,13 +53,86 @@ class BankingServiceTest {
         lenient().when(placement.earnRateSeconds()).thenReturn(3);
         lenient().when(placement.maxBanked()).thenReturn(25);
         lenient().when(placement.startingBalance()).thenReturn(5);
-        bankingService = new BankingService(messagingTemplate, bitbrushProperties);
+        lenient().when(registry.getUsers()).thenReturn(Set.of());
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {1, 2})
+    void registryPresenceAloneControlsEarningAndOneFanoutPerPrincipal(int sessionCount) {
+        bankingService.getInitialState("registry-user");
+        SimpUser user = userWithSessions("registry-user", sessionCount);
+        when(registry.getUsers()).thenReturn(Set.of(user));
+        bankingService.earnPoints();
+        assertEquals(6, bankingService.getInitialState("registry-user").balance());
+        verify(messagingTemplate).convertAndSendToUser(eq("registry-user"), eq("/queue/bank"), any(BankStateResponse.class));
+        verifyNoMoreInteractions(messagingTemplate);
+        verify(registry).getUsers();
+
+        when(registry.getUsers()).thenReturn(Set.of());
+        bankingService.earnPoints();
+        assertEquals(6, bankingService.getInitialState("registry-user").balance());
+        verifyNoMoreInteractions(messagingTemplate);
+        bankingService.deductPoint("registry-user");
+        assertEquals(5, bankingService.getInitialState("registry-user").balance());
+        bankingService.ensureBank("registry-user");
+        assertEquals(5, bankingService.getInitialState("registry-user").balance());
+        when(registry.getUsers()).thenReturn(Set.of(user));
+        bankingService.earnPoints();
+        assertEquals(6, bankingService.getInitialState("registry-user").balance());
+    }
+
+    @Test
+    void oneTickAdvancesEachDistinctPrincipalOnce() {
+        bankingService.ensureBank("one");
+        bankingService.ensureBank("two");
+        Set<SimpUser> connectedUsers = Set.of(userWithSessions("one", 2), userWithSessions("two", 1));
+        when(registry.getUsers()).thenReturn(connectedUsers);
+        bankingService.earnPoints();
+        assertEquals(6, bankingService.getInitialState("one").balance());
+        assertEquals(6, bankingService.getInitialState("two").balance());
+        verify(registry).getUsers();
+        verify(messagingTemplate).convertAndSendToUser(eq("one"), eq("/queue/bank"), any(BankStateResponse.class));
+        verify(messagingTemplate).convertAndSendToUser(eq("two"), eq("/queue/bank"), any(BankStateResponse.class));
+        verifyNoMoreInteractions(messagingTemplate);
+    }
+
+    private SimpUser userWithSessions(String name, int count) {
+        SimpUser user = mock(SimpUser.class);
+        when(user.getName()).thenReturn(name);
+        java.util.Set<SimpSession> sessions = new java.util.HashSet<>();
+        for (int index = 0; index < count; index++) {
+            SimpSession session = mock(SimpSession.class);
+            String id = name + "-session-" + index;
+            lenient().when(session.getId()).thenReturn(id);
+            lenient().when(session.getUser()).thenReturn(user);
+            lenient().when(session.getSubscriptions()).thenReturn(Set.of());
+            lenient().when(user.getSession(id)).thenReturn(session);
+            sessions.add(session);
+        }
+        lenient().when(user.getPrincipal()).thenReturn(() -> name);
+        lenient().when(user.getSessions()).thenReturn(Set.copyOf(sessions));
+        lenient().when(user.hasSessions()).thenReturn(count > 0);
+        return user;
+    }
+
+    @Test
+    void initialStateCreatesASpendableBankDefensively() {
+        assertEquals(5, bankingService.getInitialState("new-subscriber").balance());
+        assertEquals(2, bankingService.deductPoints("new-subscriber", 2));
+        assertEquals(3, bankingService.getInitialState("new-subscriber").balance());
+    }
+
+    private void connected(String name) {
+        SimpUser user = mock(SimpUser.class);
+        when(user.getName()).thenReturn(name);
+        when(registry.getUsers()).thenReturn(Set.of(user));
     }
 
     @Test
     void earnTaskIncrementsConnectedUserBalance() {
-        // Given: user UUID registered and connected (onUserConnect called)
-        bankingService.onUserConnect("uuid-1", "session-1");
+        // Bank initialized and principal present in the registry.
+        bankingService.ensureBank("uuid-1");
+        connected("uuid-1");
         // When: earnPoints() is called
         bankingService.earnPoints();
         // Then: balance increases by 1 (from starting balance to starting+1)
@@ -61,14 +142,13 @@ class BankingServiceTest {
 
     @Test
     void earnTaskSkipsDisconnectedUser() {
-        // Given: user UUID registered but disconnected (onUserDisconnect called)
-        bankingService.onUserConnect("uuid-1", "session-1");
-        bankingService.onUserDisconnect("uuid-1");
+        // A retained bank without a registry user must not earn.
+        bankingService.ensureBank("uuid-1");
         // When: earnPoints() is called
         bankingService.earnPoints();
         // Then: balance does NOT change (freeze-on-disconnect)
-        // Reconnect to inspect state (same uuid, same session)
-        bankingService.onUserConnect("uuid-1", "session-1");
+        // Initialization is idempotent and preserves the balance.
+        bankingService.ensureBank("uuid-1");
         BankStateResponse state = bankingService.getInitialState("uuid-1");
         assertEquals(5, state.balance());
     }
@@ -76,7 +156,8 @@ class BankingServiceTest {
     @Test
     void earnTaskCapsAtMaxBanked() {
         // Given: user connected with balance already at maxBanked (25)
-        bankingService.onUserConnect("uuid-1", "session-1");
+        bankingService.ensureBank("uuid-1");
+        connected("uuid-1");
         // Call earnPoints() 20 times (5 starting + 20 = 25 = maxBanked)
         for (int i = 0; i < 20; i++) {
             bankingService.earnPoints();
@@ -91,7 +172,7 @@ class BankingServiceTest {
     @Test
     void deductPointSucceedsWithBalance() {
         // Given: user connected with balance > 0
-        bankingService.onUserConnect("uuid-1", "session-1");
+        bankingService.ensureBank("uuid-1");
         // When: deductPoint(userUuid) is called
         // Then: no exception thrown, balance decreases by 1
         assertDoesNotThrow(() -> bankingService.deductPoint("uuid-1"));
@@ -101,7 +182,7 @@ class BankingServiceTest {
     @Test
     void deductPointThrowsAtZeroBalance() {
         // Given: user connected with balance = 0 (spend all 5 starting points)
-        bankingService.onUserConnect("uuid-1", "session-1");
+        bankingService.ensureBank("uuid-1");
         for (int i = 0; i < 5; i++) {
             bankingService.deductPoint("uuid-1");
         }
@@ -113,7 +194,7 @@ class BankingServiceTest {
     @Test
     void initialStateReturnsCorrectShape() {
         // Given: user connected with a known balance
-        bankingService.onUserConnect("uuid-1", "session-1");
+        bankingService.ensureBank("uuid-1");
         // When: getInitialState(sessionId) is called
         BankStateResponse r = bankingService.getInitialState("uuid-1");
         // Then: returns BankStateResponse with correct fields
@@ -125,7 +206,7 @@ class BankingServiceTest {
     @Test
     void concurrentDeductIsAtomic() throws InterruptedException {
         // Given: user connected with balance = 1
-        bankingService.onUserConnect("uuid-1", "session-1");
+        bankingService.ensureBank("uuid-1");
         // Spend 4 of the 5 starting points to get to balance=1
         for (int i = 0; i < 4; i++) {
             bankingService.deductPoint("uuid-1");
@@ -166,10 +247,10 @@ class BankingServiceTest {
     }
 
     @Test
-    void onUserConnectInitializesStartingBalance() {
+    void ensureBankInitializesStartingBalance() {
         // Given: a new user UUID (not previously seen)
-        // When: onUserConnect(uuid, sessionId) is called
-        bankingService.onUserConnect("uuid-new", "session-new");
+        // When: the connected principal's bank is initialized
+        bankingService.ensureBank("uuid-new");
         // Then: getInitialState(sessionId).balance() == 5 (STARTING_BALANCE)
         assertEquals(5, bankingService.getInitialState("uuid-new").balance());
     }
@@ -177,7 +258,7 @@ class BankingServiceTest {
     @Test
     void deductPoints_deductsExactAmount() {
         // Given: user connected with starting balance 5
-        bankingService.onUserConnect("uuid-dp-1", "session-dp-1");
+        bankingService.ensureBank("uuid-dp-1");
         // When: deductPoints(uuid, 3) is called
         int deducted = bankingService.deductPoints("uuid-dp-1", 3);
         // Then: returns 3, balance is 2
@@ -188,7 +269,7 @@ class BankingServiceTest {
     @Test
     void deductPoints_partialDeduction_whenInsufficientBalance() {
         // Given: user connected with balance 2 (5 starting - 3 deducted)
-        bankingService.onUserConnect("uuid-dp-2", "session-dp-2");
+        bankingService.ensureBank("uuid-dp-2");
         bankingService.deductPoints("uuid-dp-2", 3);
         assertEquals(2, bankingService.getInitialState("uuid-dp-2").balance());
         // When: deductPoints(uuid, 5) is called — only 2 available
@@ -221,7 +302,7 @@ class BankingServiceTest {
     @Test
     void deductPoints_returnsZero_whenNoBalance() {
         // Given: user connected with balance = 0
-        bankingService.onUserConnect("uuid-dp-3", "session-dp-3");
+        bankingService.ensureBank("uuid-dp-3");
         for (int i = 0; i < 5; i++) {
             bankingService.deductPoint("uuid-dp-3");
         }

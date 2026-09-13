@@ -25,6 +25,7 @@ public class TurnstileService {
 
     private final TurnstileProperties properties;
     private final RestClient restClient;
+    // Successful identity authentication remains verified until process restart.
     private final Set<String> verifiedUuids = ConcurrentHashMap.newKeySet();
 
     public TurnstileService(TurnstileProperties properties, RestClient.Builder restClientBuilder) {
@@ -42,12 +43,6 @@ public class TurnstileService {
     public void markVerified(String uuid) {
         if (uuid != null) {
             verifiedUuids.add(uuid);
-        }
-    }
-
-    public void removeVerified(String uuid) {
-        if (uuid != null) {
-            verifiedUuids.remove(uuid);
         }
     }
 

@@ -1,360 +1,468 @@
 package au.com.dingwall.mark.bitbrush.websocket;
 
+import au.com.dingwall.mark.bitbrush.VerificationCacheTestSupport;
+import au.com.dingwall.mark.bitbrush.dto.BankStateResponse;
 import au.com.dingwall.mark.bitbrush.dto.PixelBroadcast;
+import au.com.dingwall.mark.bitbrush.model.User;
+import au.com.dingwall.mark.bitbrush.repository.PixelRepository;
+import au.com.dingwall.mark.bitbrush.repository.UserRepository;
 import au.com.dingwall.mark.bitbrush.service.BankingService;
 import au.com.dingwall.mark.bitbrush.service.TurnstileService;
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.AppenderBase;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.*;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.EnumSource;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestComponent;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.test.web.server.LocalServerPort;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
+import org.springframework.context.annotation.Import;
+import org.springframework.context.event.EventListener;
+import org.springframework.http.*;
+import org.springframework.messaging.*;
 import org.springframework.messaging.converter.MappingJackson2MessageConverter;
-import org.springframework.messaging.simp.stomp.StompFrameHandler;
-import org.springframework.messaging.simp.stomp.StompHeaders;
-import org.springframework.messaging.simp.stomp.StompSession;
-import org.springframework.messaging.simp.stomp.StompSessionHandlerAdapter;
+import org.springframework.messaging.handler.annotation.MessageMapping;
+import org.springframework.messaging.simp.stomp.*;
+import org.springframework.messaging.simp.user.SimpUserRegistry;
+import org.springframework.messaging.support.*;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
+import org.springframework.stereotype.Controller;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.web.socket.*;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
-import org.springframework.web.socket.messaging.WebSocketStompClient;
+import org.springframework.web.socket.handler.TextWebSocketHandler;
+import org.springframework.web.socket.messaging.*;
 import org.springframework.web.socket.sockjs.client.SockJsClient;
 import org.springframework.web.socket.sockjs.client.WebSocketTransport;
 
 import java.lang.reflect.Type;
 import java.net.URI;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.TimeUnit;
+import java.security.Principal;
+import java.time.Duration;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
 
-import org.springframework.context.event.EventListener;
-import org.springframework.messaging.simp.stomp.StompHeaderAccessor;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
-import org.springframework.web.socket.WebSocketHttpHeaders;
-import org.springframework.web.socket.messaging.SessionConnectedEvent;
+import static org.awaitility.Awaitility.await;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.when;
-
-/**
- * Integration tests for WebSocket/STOMP real-time collaboration (RTME-01, RTME-02).
- *
- * <p>Uses @SpringBootTest with RANDOM_PORT — a full application context is
- * required because WebSocket tests need the actual STOMP broker running, not
- * a mock. @WebMvcTest cannot help here: WebSocket messaging bypasses the MVC
- * pipeline entirely.
- *
- * <p>Async patterns used by the tests:
- * <ul>
- *   <li>CompletableFuture — resolves when a STOMP message arrives
- *   <li>BlockingQueue — thread-safe message buffer for collecting multiple broadcasts
- *   <li>Thread.sleep(200) — allows the STOMP subscription to propagate before
- *       sending messages (subscriptions are async; sending immediately after
- *       subscribe can lose the message)
- *   <li>.get(5, SECONDS) — timeout prevents tests from hanging forever
- * </ul>
- *
- * <p>Test infrastructure:
- * <ul>
- *   <li>SockJsClient + WebSocketTransport — connects via SockJS (same transport
- *       the browser uses)
- *   <li>MappingJackson2MessageConverter — deserializes STOMP JSON payloads to Java records
- *   <li>StompSessionHandlerAdapter — minimal handler for connection lifecycle
- *   <li>StompFrameHandler — callback for incoming STOMP frames on subscribed topics
- * </ul>
- */
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
+    "bitbrush.placement.earn-rate-seconds=3600",
+    "logging.level.au.com.dingwall.mark.bitbrush=TRACE"
+})
 @ActiveProfiles("test")
-@org.springframework.context.annotation.Import(WebSocketIntegrationTest.ConnectedEventCapture.class)
+@Import({WebSocketIntegrationTest.Events.class, WebSocketIntegrationTest.ProbeController.class})
 class WebSocketIntegrationTest {
+    @LocalServerPort int port;
+    @Autowired TestRestTemplate rest;
+    @Autowired ObjectMapper mapper;
+    @Autowired BankingService bank;
+    @MockitoSpyBean UserRepository users;
+    @Autowired PixelRepository pixels;
+    @Autowired SimpUserRegistry registry;
+    @Autowired WebSocketEventListener presence;
+    @Autowired Events events;
+    @Autowired ProbeController probe;
+    @Autowired @Qualifier("clientInboundChannel") ExecutorSubscribableChannel inbound;
+    @Autowired @Qualifier("clientInboundChannelExecutor") ThreadPoolTaskExecutor inboundExecutor;
+    @Autowired @Qualifier("clientOutboundChannelExecutor") ThreadPoolTaskExecutor outboundExecutor;
+    @MockitoSpyBean TurnstileService turnstile;
 
-    /**
-     * Test helper: captures the uuid extracted from SessionConnectedEvent's native headers.
-     * Imported into the test application context via @Import.
-     */
-    static class ConnectedEventCapture {
-        private final BlockingQueue<String> capturedUuids = new LinkedBlockingQueue<>();
-        private final BlockingQueue<String> capturedUuidsViaConnectMessage = new LinkedBlockingQueue<>();
+    private final List<StompSession> sessions = new ArrayList<>();
+    private final List<WebSocketStompClient> clients = new ArrayList<>();
+    private final List<RawSocket> sockets = new ArrayList<>();
+    private final List<ILoggingEvent> logs = new CopyOnWriteArrayList<>();
+    private AppenderBase<ILoggingEvent> capture;
 
-        @EventListener
-        @SuppressWarnings("unchecked")
-        public void onConnected(SessionConnectedEvent event) {
-            StompHeaderAccessor accessor = StompHeaderAccessor.wrap(event.getMessage());
-
-            // Approach 1: direct getFirstNativeHeader (what the production code does)
-            String uuid = accessor.getFirstNativeHeader("uuid");
-            capturedUuids.offer(uuid != null ? uuid : "NULL");
-
-            // Approach 2: extract from the embedded simpConnectMessage header
-            org.springframework.messaging.Message<byte[]> connectMessage =
-                    (org.springframework.messaging.Message<byte[]>) accessor.getHeader("simpConnectMessage");
-            if (connectMessage != null) {
-                StompHeaderAccessor connectAccessor = StompHeaderAccessor.wrap(connectMessage);
-                String connectUuid = connectAccessor.getFirstNativeHeader("uuid");
-                capturedUuidsViaConnectMessage.offer(connectUuid != null ? connectUuid : "NULL");
-            } else {
-                capturedUuidsViaConnectMessage.offer("NO_CONNECT_MSG");
-            }
-        }
-
-        /**
-         * Polls for the next captured uuid via direct native header (blocks up to timeout).
-         */
-        String pollUuid(long timeout, TimeUnit unit) throws InterruptedException {
-            return capturedUuids.poll(timeout, unit);
-        }
-
-        /**
-         * Polls for the next captured uuid via simpConnectMessage (blocks up to timeout).
-         */
-        String pollUuidViaConnectMessage(long timeout, TimeUnit unit) throws InterruptedException {
-            return capturedUuidsViaConnectMessage.poll(timeout, unit);
-        }
-
-        void clear() {
-            capturedUuids.clear();
-            capturedUuidsViaConnectMessage.clear();
-        }
+    static class Events {
+        final List<SessionConnectEvent> connecting = new CopyOnWriteArrayList<>();
+        final List<SessionConnectedEvent> connected = new CopyOnWriteArrayList<>();
+        final AtomicInteger subscriptions = new AtomicInteger();
+        @EventListener void connecting(SessionConnectEvent event) { connecting.add(event); }
+        @EventListener void connected(SessionConnectedEvent event) { connected.add(event); }
+        @EventListener void subscribed(SessionSubscribeEvent event) { subscriptions.incrementAndGet(); }
+        void clear() { connecting.clear(); connected.clear(); subscriptions.set(0); }
     }
 
-    @LocalServerPort
-    int port;
-
-    @Autowired
-    TestRestTemplate restTemplate;
-
-    @Autowired
-    ObjectMapper objectMapper;
-
-    @Autowired
-    BankingService bankingService;
-
-    @Autowired
-    ConnectedEventCapture connectedEventCapture;
-
-    @MockitoBean
-    TurnstileService turnstileService;
-
-    private final List<StompSession> openSessions = new ArrayList<>();
-
-    /**
-     * Creates a connected StompSession via SockJS transport — the same transport
-     * the browser uses.
-     */
-    private StompSession connect() throws Exception {
-        WebSocketStompClient stompClient = new WebSocketStompClient(
-                new SockJsClient(List.of(new WebSocketTransport(new StandardWebSocketClient())))
-        );
-        stompClient.setMessageConverter(new MappingJackson2MessageConverter());
-        StompSession session = stompClient
-                .connect("http://localhost:{port}/ws", new StompSessionHandlerAdapter() {}, port)
-                .get(5, TimeUnit.SECONDS);
-        openSessions.add(session);
-        return session;
+    @Controller
+    @TestComponent
+    static class ProbeController {
+        final BlockingQueue<String> invocations = new LinkedBlockingQueue<>();
+        @MessageMapping("/probe")
+        void invoke(Principal principal) { invocations.add(principal.getName()); }
     }
 
-    /**
-     * Creates a connected StompSession that sends a "uuid" STOMP CONNECT header.
-     * Uses the connectAsync overload that accepts StompHeaders.
-     */
-    private StompSession connectWithUuid(String uuid) throws Exception {
-        WebSocketStompClient stompClient = new WebSocketStompClient(
-                new SockJsClient(List.of(new WebSocketTransport(new StandardWebSocketClient())))
-        );
-        stompClient.setMessageConverter(new MappingJackson2MessageConverter());
-        StompHeaders connectHeaders = new StompHeaders();
-        connectHeaders.add("uuid", uuid);
-        StompSession session = stompClient
-                .connectAsync(
-                        URI.create("http://localhost:" + port + "/ws"),
-                        new WebSocketHttpHeaders(),
-                        connectHeaders,
-                        new StompSessionHandlerAdapter() {})
-                .get(5, TimeUnit.SECONDS);
-        openSessions.add(session);
-        return session;
-    }
-
-    // WebSocket sessions are persistent (unlike HTTP request/response).
-    // Must explicitly disconnect to avoid session leaks between tests.
     @BeforeEach
-    void allowTurnstile() {
-        when(turnstileService.verify(any())).thenReturn(true);
-        when(turnstileService.isVerified(any())).thenReturn(true);
-        connectedEventCapture.clear();
+    void setUp() {
+        await().atMost(Duration.ofSeconds(5)).until(() -> registry.getUserCount() == 0 && presence.getCount() == 0);
+        events.clear();
+        probe.invocations.clear();
+        doReturn(true).when(turnstile).verify(any());
+        capture = new AppenderBase<>() {
+            @Override protected void append(ILoggingEvent event) { logs.add(event); }
+        };
+        capture.start();
+        ((Logger) LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME)).addAppender(capture);
+        for (String category : List.of("org.springframework.messaging.simp",
+                "org.springframework.web.socket.messaging", "org.springframework.web.SimpLogging")) {
+            assertTrue(((Logger) LoggerFactory.getLogger(category)).getEffectiveLevel().isGreaterOrEqual(Level.INFO));
+        }
     }
 
     @AfterEach
-    void disconnectAll() {
-        for (StompSession session : openSessions) {
-            if (session != null && session.isConnected()) {
-                session.disconnect();
-            }
-        }
-        openSessions.clear();
-        // Clean up any manually registered bank entries from pixel broadcast test
-        bankingService.onUserDisconnect("644c25a4-2f9c-4778-a9ca-1be4e903c209");
-        connectedEventCapture.clear();
+    void cleanUp() throws Exception {
+        for (StompSession session : sessions) if (session.isConnected()) session.disconnect();
+        for (RawSocket socket : sockets) if (socket.session.isOpen()) socket.session.close();
+        await().atMost(Duration.ofSeconds(5)).until(() -> registry.getUserCount() == 0 && presence.getCount() == 0);
+        drainHandlers();
+        clients.forEach(WebSocketStompClient::stop);
+        ((Logger) LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME)).detachAppender(capture);
+        capture.stop();
+        pixels.deleteAll();
+        users.deleteAll();
     }
 
-    /**
-     * RTME-01: Pixel broadcast delivered to STOMP subscriber.
-     *
-     * Given: A STOMP client is connected and subscribed to /topic/pixels
-     * When:  A pixel is placed via POST /api/pixels
-     * Then:  The subscriber receives a JSON message {x, y, color}
-     *        where color is the resolved hex string (not palette index),
-     *        within 5 seconds
-     */
     @Test
-    void pixelBroadcastDeliveredToSubscriber() throws Exception {
-        // Given: register a user so pixel placement is authorized
-        String userUuid = "644c25a4-2f9c-4778-a9ca-1be4e903c209";
-        String wsSession = "ws-test-session-pixel";
+    void pixelBroadcastContainsOnlyPublicAuthorship() throws Exception {
+        User user = identity();
+        StompSession session = connect(user.getUuid());
+        BlockingQueue<PixelBroadcast> received = new LinkedBlockingQueue<>();
+        session.subscribe("/topic/pixels", handler(PixelBroadcast.class, received));
+        bankBarrier(session);
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
-        restTemplate.postForEntity("/api/users",
-                new HttpEntity<>("""
-                        {"uuid": "%s", "username": "wstester", "pin": "1234", "pinConfirmation": "1234"}
-                        """.formatted(userUuid), headers),
-                Void.class);
-
-        // Register with BankingService so pixel placement has a valid bank entry.
-        // The STOMP client below does not send a uuid header (test infrastructure
-        // doesn't support custom CONNECT headers easily), so we initialize manually.
-        bankingService.onUserConnect(userUuid, wsSession);
-
-        // CompletableFuture acts like a JavaScript Promise — complete() resolves it.
-        // The StompFrameHandler's handleFrame callback completes the future when a message arrives.
-        // .get(5, SECONDS) blocks the test thread until the future resolves or times out.
-
-        // Given: a STOMP client connected and subscribed to /topic/pixels
-        CompletableFuture<PixelBroadcast> received = new CompletableFuture<>();
-        StompSession session = connect();
-        session.subscribe("/topic/pixels", new StompFrameHandler() {
-            @Override
-            public Type getPayloadType(StompHeaders headers) {
-                return PixelBroadcast.class;
-            }
-
-            @Override
-            public void handleFrame(StompHeaders headers, Object payload) {
-                received.complete((PixelBroadcast) payload);
-            }
-        });
-
-        // Allow subscription to register
-        Thread.sleep(200);
-
-        // When: POST /api/pixels with paletteIndex 0 -> first color in palette
-        restTemplate.postForEntity("/api/pixels",
-                new HttpEntity<>("""
-                        {
-                          "pixels": [{"x": 5, "y": 10}],
-                          "paletteIndex": 0,
-                          "authorUuid": "%s"
-                        }
-                        """.formatted(userUuid), headers),
-                Void.class);
-
-        // Then: subscriber receives {x: 5, y: 10, color: <resolved hex>} within 5 seconds
-        PixelBroadcast broadcast = received.get(5, TimeUnit.SECONDS);
-        assertThat(broadcast).isNotNull();
-        assertThat(broadcast.x()).isEqualTo(5);
-        assertThat(broadcast.y()).isEqualTo(10);
-        assertThat(broadcast.color()).matches("#[0-9a-fA-F]{6}");
+        var response = rest.postForEntity("/api/pixels", new HttpEntity<>(Map.of(
+            "pixels", List.of(Map.of("x", 5, "y", 10)), "paletteIndex", 42, "authorUuid", user.getUuid()), headers), Void.class);
+        assertEquals(201, response.getStatusCode().value());
+        PixelBroadcast broadcast = received.poll(5, TimeUnit.SECONDS);
+        assertNotNull(broadcast);
+        assertEquals(5, broadcast.x());
+        assertEquals(10, broadcast.y());
+        assertEquals(user.getAuthorId(), broadcast.authorId());
+        assertFalse(mapper.writeValueAsString(broadcast).contains(user.getUuid()));
+        assertNoCredentialLogs(user.getUuid());
     }
 
-    /**
-     * RTME-02: User count broadcast on connect and disconnect.
-     *
-     * Given: A STOMP client subscribes to /topic/users/count
-     * When:  A second STOMP client connects, then disconnects
-     * Then:  The subscriber receives count updates:
-     *        - count increases when second client connects
-     *        - count decreases when second client disconnects
-     *
-     * Note on timing: the count broadcast for client A's own connection fires
-     * before the subscription frame arrives at the broker, so it may be missed.
-     * The test waits for subscription to settle before connecting client B,
-     * then verifies that B's connect and disconnect each trigger a count update
-     * in the correct direction.
-     */
     @Test
-    void userCountBroadcastOnConnectAndDisconnect() throws Exception {
-        // BlockingQueue collects multiple messages over time (unlike CompletableFuture which takes only one).
-        // poll(5, SECONDS) blocks until a message arrives or times out -- no busy-wait loop needed.
-        // This pattern tests a sequence of events: connect -> count increases, disconnect -> count decreases.
-
-        // Given: client A connected and subscribed to /topic/users/count
+    void onlineCountCountsSessionsAndDuplicateDisconnectsDoNotChangeIt() throws Exception {
+        User user = identity();
+        StompSession first = connect(user.getUuid());
         BlockingQueue<Integer> counts = new LinkedBlockingQueue<>();
-        StompSession clientA = connect();
-        clientA.subscribe("/topic/users/count", new StompFrameHandler() {
-            @Override
-            public Type getPayloadType(StompHeaders headers) {
-                return Integer.class;
-            }
-
-            @Override
-            public void handleFrame(StompHeaders headers, Object payload) {
-                counts.offer((Integer) payload);
-            }
-        });
-
-        // Allow subscription to propagate to broker before observing events
-        Thread.sleep(300);
-
-        // Drain any stale count messages that arrived before subscription settled
-        counts.clear();
-
-        // When: client B connects -> count should increase
-        StompSession clientB = connect();
-        Integer countAfterBConnected = counts.poll(5, TimeUnit.SECONDS);
-        assertThat(countAfterBConnected).isNotNull().isGreaterThanOrEqualTo(2);
-
-        // When: client B disconnects -> count should decrease
-        clientB.disconnect();
-        openSessions.remove(clientB);
-        Integer countAfterBDisconnected = counts.poll(5, TimeUnit.SECONDS);
-        assertThat(countAfterBDisconnected).isNotNull().isLessThan(countAfterBConnected);
+        first.subscribe("/topic/users/count", handler(Integer.class, counts));
+        bankBarrier(first);
+        StompSession second = connect(user.getUuid());
+        assertEquals(2, counts.poll(5, TimeUnit.SECONDS));
+        second.disconnect();
+        awaitSessions(user.getUuid(), 1);
+        assertEquals(1, counts.poll(5, TimeUnit.SECONDS));
+        assertEquals(1, presence.getCount());
     }
 
-    /**
-     * Proves that getFirstNativeHeader("uuid") returns null on SessionConnectedEvent's
-     * CONNECT_ACK message, but the uuid IS available via the embedded simpConnectMessage.
-     *
-     * This test documents the Spring framework behavior:
-     * - SessionConnectedEvent wraps the broker's CONNECT_ACK, not the client's CONNECT frame
-     * - The CONNECT_ACK has no client native headers
-     * - The original CONNECT message is embedded in the "simpConnectMessage" header
-     */
+    @ParameterizedTest
+    @CsvSource({"CONNECT,missing", "STOMP,missing", "CONNECT,blank", "STOMP,blank",
+        "CONNECT,malformed", "STOMP,malformed", "CONNECT,public", "STOMP,public",
+        "CONNECT,legacyPublic", "STOMP,legacyPublic", "CONNECT,unknown", "STOMP,unknown",
+        "CONNECT,repositoryFailure", "STOMP,repositoryFailure"})
+    void invalidConnectionPipelineCannotReachAnyAuthenticatedSurface(String command, String kind) throws Exception {
+        User existing = identity();
+        String value = switch (kind) {
+            case "missing" -> null;
+            case "blank" -> "   ";
+            case "malformed" -> "submitted-invalid-credential";
+            case "public" -> existing.getAuthorId();
+            case "legacyPublic" -> {
+                String authorId = UUID.randomUUID().toString();
+                existing.setAuthorId(authorId);
+                users.saveAndFlush(existing);
+                yield authorId;
+            }
+            case "repositoryFailure" -> {
+                doThrow(new IllegalStateException("Private repository failure " + existing.getUuid()))
+                    .when(users).existsById(existing.getUuid());
+                yield existing.getUuid();
+            }
+            default -> UUID.randomUUID().toString();
+        };
+        assertRejectedPipeline(command, value);
+    }
+
     @Test
-    void sessionConnectedEventPreservesClientNativeHeaders() throws Exception {
-        String testUuid = "header-probe-uuid-" + System.nanoTime();
-        connectWithUuid(testUuid);
+    void invalidStompPipelineKeepsCredentialsOutOfErrorLevelFrameworkLogs() throws Exception {
+        List<Logger> framework = List.of(
+            (Logger) LoggerFactory.getLogger("org.springframework.messaging.simp"),
+            (Logger) LoggerFactory.getLogger("org.springframework.web.socket.messaging"),
+            (Logger) LoggerFactory.getLogger("org.springframework.web.SimpLogging"));
+        List<Level> previous = framework.stream().map(Logger::getLevel).toList();
+        try {
+            framework.forEach(logger -> logger.setLevel(Level.ERROR));
+            assertRejectedPipeline("STOMP", UUID.randomUUID().toString());
+        } finally {
+            for (int index = 0; index < framework.size(); index++) framework.get(index).setLevel(previous.get(index));
+        }
+    }
 
-        // Wait for the SessionConnectedEvent to fire and our capture listener to record it
-        String directCapture = connectedEventCapture.pollUuid(5, TimeUnit.SECONDS);
-        String viaConnectMessage = connectedEventCapture.pollUuidViaConnectMessage(5, TimeUnit.SECONDS);
+    private void assertRejectedPipeline(String command, String value) throws Exception {
+        clearInvocations(turnstile);
+        RawSocket socket = raw();
+        socket.send(connection(command, value) + followOnFrames());
+        socket.closed.get(5, TimeUnit.SECONDS);
+        drainHandlers();
+        assertTrue(socket.frames.stream().anyMatch(frame -> frame.startsWith("ERROR")) || !socket.session.isOpen());
+        assertTrue(socket.frames.stream().noneMatch(frame -> frame.startsWith("CONNECTED")));
+        assertTrue(socket.frames.stream().noneMatch(frame -> frame.startsWith("MESSAGE")),
+            "Invalid pipeline received an application response or pixel/bank broadcast");
+        assertTrue(events.connecting.isEmpty(), "Invalid identity published a SessionConnectEvent");
+        assertTrue(events.connected.isEmpty());
+        assertEquals(0, registry.getUserCount());
+        assertEquals(0, presence.getCount());
+        assertEquals(0, events.subscriptions.get());
+        assertTrue(probe.invocations.isEmpty());
+        assertEquals(0, pixels.count());
+        if (value != null) assertEquals(0, bank.deductPoints(value, 1), "Rejected connection initialized a bank");
+        verify(turnstile, never()).markVerified(any());
+        assertNoCredentialLogs(value);
+        // Spring deliberately skips ERROR logging for rejected CONNECT frames.
+        // Capture all emitted levels, including ERROR; rejection is observed on the wire.
+    }
 
-        // Direct getFirstNativeHeader on the CONNECTED/CONNECT_ACK message returns null.
-        assertThat(directCapture)
-                .as("getFirstNativeHeader('uuid') on CONNECT_ACK message is NULL (native headers not preserved)")
-                .isEqualTo("NULL");
+    @ParameterizedTest
+    @EnumSource(value = StompCommand.class, names = {"CONNECT", "STOMP"})
+    void validSingleMessagePipelineAuthenticatesBeforeSendAndSubscribe(StompCommand command) throws Exception {
+        User user = identity();
+        assertFalse(turnstile.isVerified(user.getUuid()));
+        RawSocket socket = raw();
+        socket.send(connection(command.name(), user.getUuid()) + followOnFrames());
+        await().atMost(Duration.ofSeconds(5)).until(() -> socket.frames.stream().anyMatch(frame ->
+            frame.startsWith("MESSAGE") && frame.contains("subscription:initial")));
+        assertEquals(user.getUuid(), probe.invocations.poll(5, TimeUnit.SECONDS));
+        awaitSessions(user.getUuid(), 1);
+        assertTrue(turnstile.isVerified(user.getUuid()));
+        assertEquals(user.getUuid(), events.connecting.getFirst().getUser().getName());
+        assertEquals(user.getUuid(), events.connected.getFirst().getUser().getName());
+        assertTrue(socket.frames.stream().anyMatch(frame -> frame.startsWith("CONNECTED")));
+        assertEquals(5, bank.getInitialState(user.getUuid()).balance());
+        assertNoCredentialLogs(user.getUuid());
+    }
 
-        // But extracting the original CONNECT message from simpConnectMessage header DOES work.
-        assertThat(viaConnectMessage)
-                .as("getFirstNativeHeader('uuid') via simpConnectMessage should return the client's uuid")
-                .isNotNull()
-                .isNotEqualTo("NULL")
-                .isEqualTo(testUuid);
+    @Test
+    void authenticationCompletesEvenWhenDownstreamConnectHandlingIsBlocked() throws Exception {
+        assertEquals(1, inboundExecutor.getCorePoolSize(), "Handler FIFO requires one inbound worker");
+        assertEquals(1, inboundExecutor.getMaxPoolSize(), "Handler FIFO must hold under load");
+        User user = identity();
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        ExecutorChannelInterceptor blocker = new ExecutorChannelInterceptor() {
+            @Override public Message<?> beforeHandle(Message<?> message, MessageChannel channel, MessageHandler handler) {
+                StompHeaderAccessor headers = MessageHeaderAccessor.getAccessor(message, StompHeaderAccessor.class);
+                if (headers != null && headers.getCommand() == StompCommand.CONNECT) {
+                    entered.countDown();
+                    try {
+                        if (!release.await(5, TimeUnit.SECONDS)) throw new AssertionError("Connect blocker was not released");
+                    } catch (InterruptedException exception) {
+                        Thread.currentThread().interrupt();
+                        throw new AssertionError(exception);
+                    }
+                }
+                return message;
+            }
+        };
+        inbound.addInterceptor(blocker);
+        try {
+            RawSocket socket = raw();
+            socket.send(connection("CONNECT", user.getUuid()) + followOnFrames());
+            assertTrue(entered.await(5, TimeUnit.SECONDS));
+            assertTrue(turnstile.isVerified(user.getUuid()), "Verification must happen in the synchronous interceptor");
+            assertEquals(0, registry.getUserCount());
+            assertTrue(probe.invocations.isEmpty(), "Pipelined SEND overtook blocked CONNECT");
+            assertTrue(events.connected.isEmpty());
+            release.countDown();
+            assertEquals(user.getUuid(), probe.invocations.poll(5, TimeUnit.SECONDS));
+            awaitSessions(user.getUuid(), 1);
+            assertNoCredentialLogs(user.getUuid());
+        } finally {
+            release.countDown();
+            inbound.removeInterceptor(blocker);
+        }
+    }
+
+    @Test
+    void reconnectRestoresAClearedCacheAndDisconnectRetainsVerificationAndBalance() throws Exception {
+        User user = identity();
+        StompSession first = connect(user.getUuid());
+        bankBarrier(first);
+        bank.deductPoint(user.getUuid());
+        first.disconnect();
+        awaitSessions(user.getUuid(), 0);
+        assertTrue(turnstile.isVerified(user.getUuid()));
+        assertEquals(4, bank.getInitialState(user.getUuid()).balance());
+        VerificationCacheTestSupport.clearVerification(turnstile);
+        assertFalse(turnstile.isVerified(user.getUuid()));
+        StompSession second = connect(user.getUuid());
+        assertEquals(4, bankBarrier(second).balance());
+        assertTrue(turnstile.isVerified(user.getUuid()));
+        second.disconnect();
+        awaitSessions(user.getUuid(), 0);
+        assertTrue(turnstile.isVerified(user.getUuid()));
+        bank.earnPoints();
+        assertEquals(4, bank.getInitialState(user.getUuid()).balance());
+        assertNoCredentialLogs(user.getUuid());
+    }
+
+    @Test
+    void twoSessionsEarnOncePerPrincipalAndBothReceiveExactlyOneUpdate() throws Exception {
+        User user = identity();
+        StompSession first = connect(user.getUuid());
+        StompSession second = connect(user.getUuid());
+        BlockingQueue<BankStateResponse> firstUpdates = new LinkedBlockingQueue<>();
+        BlockingQueue<BankStateResponse> secondUpdates = new LinkedBlockingQueue<>();
+        first.subscribe("/user/queue/bank", handler(BankStateResponse.class, firstUpdates));
+        BankStateResponse firstInitial = bankBarrier(first);
+        second.subscribe("/user/queue/bank", handler(BankStateResponse.class, secondUpdates));
+        BankStateResponse secondInitial = bankBarrier(second);
+        await().atMost(Duration.ofSeconds(5)).untilAsserted(() -> {
+            assertEquals(1, registry.getUserCount());
+            var registered = registry.getUser(user.getUuid());
+            assertNotNull(registered);
+            assertEquals(2, registered.getSessions().size());
+            assertTrue(registered.getSessions().stream().allMatch(session ->
+                session.getSubscriptions().stream().anyMatch(sub -> sub.getDestination().equals("/user/queue/bank"))
+                && session.getSubscriptions().stream().anyMatch(sub -> sub.getDestination().equals("/app/bank"))));
+        });
+        assertEquals(5, firstInitial.balance());
+        assertEquals(5, secondInitial.balance());
+        assertTrue(firstUpdates.isEmpty());
+        assertTrue(secondUpdates.isEmpty());
+
+        bank.earnPoints();
+        assertBalance(firstUpdates, 6);
+        assertBalance(secondUpdates, 6);
+        drainHandlers();
+        assertTrue(firstUpdates.isEmpty());
+        assertTrue(secondUpdates.isEmpty());
+
+        first.disconnect();
+        awaitSessions(user.getUuid(), 1);
+        bank.earnPoints();
+        assertBalance(secondUpdates, 7);
+        drainHandlers();
+        assertTrue(firstUpdates.isEmpty());
+        assertTrue(secondUpdates.isEmpty());
+
+        second.disconnect();
+        awaitSessions(user.getUuid(), 0);
+        bank.earnPoints();
+        assertEquals(7, bank.getInitialState(user.getUuid()).balance());
+        assertTrue(firstUpdates.isEmpty());
+        assertTrue(secondUpdates.isEmpty());
+        assertTrue(turnstile.isVerified(user.getUuid()));
+        assertNoCredentialLogs(user.getUuid());
+    }
+
+    private User identity() {
+        User user = new User();
+        user.setUuid(UUID.randomUUID().toString());
+        user.setUsername("ws-" + UUID.randomUUID());
+        user.setAuthorId("author_" + UUID.randomUUID().toString().replace("-", ""));
+        user.setPinHash("not-used-by-websocket-authentication");
+        return users.saveAndFlush(user);
+    }
+
+    private StompSession connect(String uuid) throws Exception {
+        WebSocketStompClient client = new WebSocketStompClient(
+            new SockJsClient(List.of(new WebSocketTransport(new StandardWebSocketClient()))));
+        clients.add(client);
+        client.setMessageConverter(new MappingJackson2MessageConverter());
+        StompHeaders headers = new StompHeaders();
+        headers.add("uuid", uuid);
+        StompSession session = client.connectAsync(URI.create("http://localhost:" + port + "/ws"),
+            new WebSocketHttpHeaders(), headers, new StompSessionHandlerAdapter() {}).get(5, TimeUnit.SECONDS);
+        sessions.add(session);
+        return session;
+    }
+
+    private BankStateResponse bankBarrier(StompSession session) throws Exception {
+        BlockingQueue<BankStateResponse> initial = new LinkedBlockingQueue<>();
+        session.subscribe("/app/bank", handler(BankStateResponse.class, initial));
+        BankStateResponse response = initial.poll(5, TimeUnit.SECONDS);
+        assertNotNull(response, "Initial response is the FIFO barrier for preceding subscriptions");
+        return response;
+    }
+
+    private <T> StompFrameHandler handler(Class<T> type, BlockingQueue<T> queue) {
+        return new StompFrameHandler() {
+            @Override public Type getPayloadType(StompHeaders headers) { return type; }
+            @Override public void handleFrame(StompHeaders headers, Object payload) { queue.add(type.cast(payload)); }
+        };
+    }
+
+    private void awaitSessions(String uuid, int count) {
+        await().atMost(Duration.ofSeconds(5)).until(() -> {
+            var user = registry.getUser(uuid);
+            return count == 0 ? user == null : user != null && user.getSessions().size() == count;
+        });
+    }
+
+    private void assertBalance(BlockingQueue<BankStateResponse> updates, int expected) throws Exception {
+        BankStateResponse response = updates.poll(5, TimeUnit.SECONDS);
+        assertNotNull(response);
+        assertEquals(expected, response.balance());
+    }
+
+    private void drainHandlers() throws Exception {
+        inboundExecutor.submit(() -> {}).get(5, TimeUnit.SECONDS);
+        await().atMost(Duration.ofSeconds(5)).until(() ->
+            outboundExecutor.getActiveCount() == 0 && outboundExecutor.getQueueSize() == 0);
+    }
+
+    private void assertNoCredentialLogs(String value) {
+        if (value == null || value.isBlank()) return;
+        for (ILoggingEvent event : logs) {
+            String rendered = event.getFormattedMessage();
+            if (event.getThrowableProxy() != null)
+                rendered += ch.qos.logback.classic.spi.ThrowableProxyUtil.asString(event.getThrowableProxy());
+            assertFalse(rendered.contains(value), "Submitted credential reached combined logs in " + event.getLoggerName());
+        }
+    }
+
+    private String connection(String command, String uuid) {
+        return command + "\naccept-version:1.2\nhost:localhost\nheart-beat:0,0\n"
+            + (uuid == null ? "" : "uuid:" + uuid + "\n") + "\n\0";
+    }
+
+    private String followOnFrames() {
+        return "SEND\ndestination:/app/probe\n\n\0"
+            + "SUBSCRIBE\nid:pixels\ndestination:/topic/pixels\n\n\0"
+            + "SUBSCRIBE\nid:bank\ndestination:/user/queue/bank\n\n\0"
+            + "SUBSCRIBE\nid:initial\ndestination:/app/bank\n\n\0";
+    }
+
+    private RawSocket raw() throws Exception {
+        RawSocket socket = new RawSocket();
+        socket.session = new StandardWebSocketClient().execute(socket, new WebSocketHttpHeaders(),
+            URI.create("ws://localhost:" + port + "/ws/websocket")).get(5, TimeUnit.SECONDS);
+        sockets.add(socket);
+        return socket;
+    }
+
+    private static class RawSocket extends TextWebSocketHandler {
+        final List<String> frames = new CopyOnWriteArrayList<>();
+        final CompletableFuture<CloseStatus> closed = new CompletableFuture<>();
+        WebSocketSession session;
+        void send(String payload) throws Exception { session.sendMessage(new TextMessage(payload)); }
+        @Override protected void handleTextMessage(WebSocketSession session, TextMessage message) {
+            frames.addAll(Arrays.asList(message.getPayload().split("\0")));
+        }
+        @Override public void afterConnectionClosed(WebSocketSession session, CloseStatus status) { closed.complete(status); }
     }
 }

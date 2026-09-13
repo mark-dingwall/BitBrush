@@ -20,6 +20,15 @@ import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.MediaType;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.messaging.simp.user.SimpUser;
+import org.springframework.messaging.simp.user.SimpUserRegistry;
+import org.springframework.messaging.simp.stomp.StompHeaderAccessor;
+import org.springframework.messaging.simp.stomp.StompCommand;
+import org.springframework.messaging.support.MessageBuilder;
+import org.springframework.web.socket.messaging.SessionConnectedEvent;
+import org.springframework.web.socket.messaging.SessionDisconnectEvent;
+import org.springframework.web.socket.CloseStatus;
+import au.com.dingwall.mark.bitbrush.websocket.WebSocketEventListener;
 import org.springframework.mock.env.MockEnvironment;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -66,8 +75,14 @@ class SensitiveDataLoggingTest {
             PinCredentialService credentials = new PinCredentialService(properties);
             UserRepository users = mock(UserRepository.class);
             PixelRepository pixels = mock(PixelRepository.class);
-            BankingService bank = mock(BankingService.class); // Task 7 owns banking/STOMP logging.
-            when(bank.deductPoints(privateId, 1)).thenReturn(1);
+            SimpUserRegistry registry = mock(SimpUserRegistry.class);
+            SimpUser connectedUser = mock(SimpUser.class);
+            when(connectedUser.getName()).thenReturn(privateId);
+            when(registry.getUsers()).thenReturn(java.util.Set.of(connectedUser));
+            BankingService bank = new BankingService(mock(SimpMessagingTemplate.class),
+                new BitbrushProperties(new BitbrushProperties.Canvas(250, 250),
+                    new BitbrushProperties.Placement(3, 25, 5)), registry);
+            bank.ensureBank(privateId);
             AtomicReference<User> stored = new AtomicReference<>();
             when(users.saveAndFlush(any())).thenAnswer(invocation -> {
                 User user = invocation.getArgument(0);
@@ -101,6 +116,24 @@ class SensitiveDataLoggingTest {
             assertEquals(201, postJson(mvc, mapper, "/api/pixels",
                 new PixelPlacementRequest(List.of(new PixelCoordinate(1, 2)), 1, privateId)).getStatus());
 
+            when(users.existsById(privateId)).thenReturn(true);
+            var connect = StompHeaderAccessor.create(StompCommand.CONNECT);
+            connect.setSessionId("privacy-session");
+            connect.setNativeHeader("uuid", privateId);
+            connect.setLeaveMutable(true);
+            var connectMessage = MessageBuilder.createMessage(new byte[0], connect.getMessageHeaders());
+            new StompAuthenticationInterceptor(users, turnstile).preSend(connectMessage, null);
+            var connected = StompHeaderAccessor.create(StompCommand.CONNECTED);
+            connected.setSessionId("privacy-session");
+            connected.setHeader("simpConnectMessage", connectMessage);
+            var connectedMessage = MessageBuilder.createMessage(new byte[0], connected.getMessageHeaders());
+            var listener = new WebSocketEventListener(mock(SimpMessagingTemplate.class), bank);
+            listener.handleConnect(new SessionConnectedEvent(this, connectedMessage, connect.getUser()));
+            bank.earnPoints();
+            bank.deductPoint(privateId);
+            listener.handleDisconnect(new SessionDisconnectEvent(this, connectedMessage, "privacy-session",
+                CloseStatus.NORMAL, connect.getUser()));
+
             String markers = String.join(" ", privateId, missingId, pin, hash, pepper);
             String problems = failed.getContentAsString()
                 + mapper.writeValueAsString(handler.handleIllegalArgument(new IllegalArgumentException(markers)))
@@ -129,6 +162,22 @@ class SensitiveDataLoggingTest {
             logger.setLevel(previousLevel);
             logger.setAdditive(previousAdditive);
             capture.stop();
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"dev", "test", "docker", "prod"})
+    void supportedProfilesKeepCredentialRenderingFrameworkLoggersAtInfoOrHigher(String profile) throws Exception {
+        java.util.Properties properties = new java.util.Properties();
+        try (var resource = getClass().getResourceAsStream("/application-" + profile + ".properties")) {
+            properties.load(resource);
+        }
+        for (String category : List.of("org.springframework.messaging.simp",
+                "org.springframework.web.socket.messaging", "org.springframework.web.SimpLogging")) {
+            String configured = properties.getProperty("logging.level." + category);
+            assertNotNull(configured, "Each supported profile must protect " + category);
+            assertTrue(Level.toLevel(configured, Level.TRACE).isGreaterOrEqual(Level.INFO),
+                "Framework credential rendering must remain disabled for " + category);
         }
     }
 
