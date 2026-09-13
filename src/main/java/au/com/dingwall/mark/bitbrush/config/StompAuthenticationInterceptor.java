@@ -60,5 +60,9 @@ public class StompAuthenticationInterceptor implements ChannelInterceptor {
     private record StompPrincipal(String name) implements Principal {
         @Override
         public String getName() { return name; }
+
+        // Spring can render an entire malformed message at ERROR, including its Principal.
+        @Override
+        public String toString() { return "StompPrincipal[authenticated]"; }
     }
 }

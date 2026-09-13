@@ -212,6 +212,32 @@ class WebSocketIntegrationTest {
         }
     }
 
+    @ParameterizedTest
+    @EnumSource(value = StompCommand.class, names = {"CONNECT", "STOMP"})
+    void malformedAuthenticatedSubscriptionKeepsPrivateIdentityOutOfErrorLogs(StompCommand command) throws Exception {
+        User user = identity();
+        RawSocket socket = raw();
+        socket.send(connection(command.name(), user.getUuid()));
+        awaitSessions(user.getUuid(), 1);
+        await().atMost(Duration.ofSeconds(5)).until(() -> socket.frames.stream()
+            .anyMatch(frame -> frame.startsWith("CONNECTED")));
+
+        socket.send("SUBSCRIBE\ndestination:/topic/pixels\n\n\0"
+            + "SEND\ndestination:/app/probe\n\n\0"
+            + "SUBSCRIBE\nid:privacy-barrier\ndestination:/app/bank\n\n\0");
+        await().atMost(Duration.ofSeconds(5)).until(() -> socket.frames.stream().anyMatch(frame ->
+            frame.startsWith("MESSAGE") && frame.contains("subscription:privacy-barrier")));
+        drainHandlers();
+
+        assertTrue(logs.stream().anyMatch(event -> event.getLevel() == Level.ERROR
+            && event.getFormattedMessage().startsWith("No subscriptionId")),
+            "The regression must exercise the framework's ERROR-level message rendering");
+        assertEquals(user.getUuid(), probe.invocations.poll(5, TimeUnit.SECONDS),
+            "The authenticated Principal name must still route application commands");
+        assertEquals(5, bank.getInitialState(user.getUuid()).balance());
+        assertNoCredentialLogs(user.getUuid());
+    }
+
     private void assertRejectedPipeline(String command, String value) throws Exception {
         clearInvocations(turnstile);
         RawSocket socket = raw();
