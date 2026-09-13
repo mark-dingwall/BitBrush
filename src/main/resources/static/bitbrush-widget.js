@@ -43,14 +43,18 @@
     '.bbw-more-btn { background: none; border: 1px solid #333; color: #888; font-size: 11px; padding: 2px 8px; border-radius: 3px; cursor: pointer; margin-top: 4px; font-family: inherit; }',
     '.bbw-more-btn:hover { border-color: #555; color: #ccc; }',
 
-    // Username overlay
-    '.bbw-overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.85); display: flex; align-items: center; justify-content: center; border-radius: 8px; z-index: 10; }',
-    '.bbw-modal { text-align: center; padding: 24px; }',
+    // Identity overlay remains scrollable inside short embedding viewports.
+    '.bbw-overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.85); display: flex; align-items: flex-start; justify-content: center; padding: 16px; border-radius: 8px; z-index: 11; }',
+    '.bbw-modal { text-align: center; padding: 24px; background: #1a1a1a; border-radius: 8px; width: 100%; max-width: 360px; max-height: calc(100vh - 48px); overflow-y: auto; position: sticky; top: 16px; }',
     '.bbw-modal h3 { margin: 0 0 12px; font-size: 16px; color: #00cccc; }',
-    '.bbw-modal input { background: #111; border: 1px solid #333; color: #ccc; padding: 8px 12px; border-radius: 4px; font-family: inherit; font-size: 14px; width: 200px; outline: none; }',
+    '.bbw-modal-description { font-size: 14px; color: #999; margin: 0 0 16px; }',
+    '.bbw-identity-form { display: flex; flex-direction: column; gap: 12px; }',
+    '.bbw-identity-form label { display: block; text-align: left; margin-bottom: 4px; font-size: 14px; }',
+    '.bbw-modal input { background: #111; border: 1px solid #333; color: #ccc; padding: 8px 12px; border-radius: 4px; font-family: inherit; font-size: 16px; width: 100%; outline: none; }',
     '.bbw-modal input:focus { border-color: #00cccc; }',
     '.bbw-modal button { background: #00cccc; color: #000; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-family: inherit; font-size: 13px; margin-top: 8px; margin-left: 4px; }',
     '.bbw-modal button:hover { background: #00eedd; }',
+    '.bbw-modal button:disabled { opacity: 0.5; cursor: wait; }',
     '.bbw-modal-error { color: #ff6666; font-size: 12px; margin-top: 8px; min-height: 16px; }',
 
     // Footer
@@ -669,118 +673,176 @@
       statusText.textContent = count + ' online';
     }
 
-    // ── Identity / username ───────────────────────────────────────────────────
-    function getOrCreateUuid() {
+    // ── Identity / create and recovery ────────────────────────────────────────
+    function persistIdentity(identity) {
+      localStorage.setItem(LS_PREFIX + 'uuid', identity.uuid);
+      localStorage.setItem(LS_PREFIX + 'username', identity.username);
+    }
+
+    function clearIdentity() {
+      localStorage.removeItem(LS_PREFIX + 'uuid');
+      localStorage.removeItem(LS_PREFIX + 'username');
+    }
+
+    function showIdentityOverlay(initialError) {
+      return new Promise(function (resolve) {
+        var overlay = document.createElement('div');
+        overlay.className = 'bbw-overlay';
+        var modal = document.createElement('div');
+        modal.className = 'bbw-modal';
+        modal.setAttribute('role', 'dialog');
+        modal.setAttribute('aria-modal', 'true');
+        modal.setAttribute('aria-labelledby', 'bbw-modal-heading');
+        modal.innerHTML = '<h3 id="bbw-modal-heading">Welcome to BitBrush</h3>' +
+          '<p class="bbw-modal-description"></p>' +
+          '<form class="bbw-identity-form">' +
+            '<div><label for="bbw-username-input">Username</label>' +
+              '<input id="bbw-username-input" type="text" placeholder="3-30 characters" maxlength="30" autocomplete="username"></div>' +
+            '<div><label for="bbw-pin-input">PIN</label>' +
+              '<input id="bbw-pin-input" type="password" autocomplete="new-password"></div>' +
+            '<div class="bbw-pin-confirmation-field"><label for="bbw-pin-confirmation-input">Confirm PIN</label>' +
+              '<input id="bbw-pin-confirmation-input" type="password" autocomplete="new-password"></div>' +
+            '<div class="bbw-modal-error" role="alert"></div>' +
+            '<button class="bbw-identity-submit" type="submit">Create account</button>' +
+            '<button class="bbw-identity-mode-toggle" type="button">Already have one? Log in</button>' +
+          '</form>';
+        overlay.appendChild(modal);
+        root.appendChild(overlay);
+
+        var form = modal.querySelector('.bbw-identity-form');
+        var input = modal.querySelector('#bbw-username-input');
+        var pinInput = modal.querySelector('#bbw-pin-input');
+        var confirmationInput = modal.querySelector('#bbw-pin-confirmation-input');
+        var confirmationField = modal.querySelector('.bbw-pin-confirmation-field');
+        var errorEl = modal.querySelector('.bbw-modal-error');
+        var submitBtn = modal.querySelector('.bbw-identity-submit');
+        var modeToggle = modal.querySelector('.bbw-identity-mode-toggle');
+        var description = modal.querySelector('.bbw-modal-description');
+        var mode = 'create';
+        var submitting = false;
+
+        function clearPins() {
+          pinInput.value = '';
+          confirmationInput.value = '';
+        }
+
+        function renderMode() {
+          var creating = mode === 'create';
+          clearPins();
+          errorEl.textContent = '';
+          confirmationField.hidden = !creating;
+          confirmationInput.disabled = !creating;
+          pinInput.autocomplete = creating ? 'new-password' : 'current-password';
+          submitBtn.textContent = creating ? 'Create account' : 'Log in';
+          modeToggle.textContent = creating ? 'Already have one? Log in' : 'Need an account? Create one';
+          description.textContent = creating
+            ? 'Choose a username and a four-character PIN to start painting'
+            : 'Enter your username and PIN to recover your account';
+        }
+
+        function toggleMode() {
+          if (submitting) return;
+          mode = mode === 'create' ? 'recover' : 'create';
+          renderMode();
+          input.focus();
+        }
+
+        function setSubmitting(value) {
+          submitting = value;
+          input.disabled = value;
+          pinInput.disabled = value;
+          confirmationInput.disabled = value || mode !== 'create';
+          submitBtn.disabled = value;
+          modeToggle.disabled = value;
+        }
+
+        async function submit(event) {
+          event.preventDefault();
+          if (submitting) return;
+          var username = input.value.trim();
+          errorEl.textContent = '';
+          if (username.length < 3 || username.length > 30 || username.toLowerCase() === 'you') {
+            errorEl.textContent = username.toLowerCase() === 'you'
+              ? "Username 'You' is reserved" : 'Username must be 3-30 characters';
+            clearPins();
+            return;
+          }
+
+          // PINs are opaque, transient strings; validation and canonicalization belong to the server.
+          var creating = mode === 'create';
+          var payload = creating
+            ? { uuid: crypto.randomUUID(), username: username, pin: pinInput.value, pinConfirmation: confirmationInput.value }
+            : { username: username, pin: pinInput.value };
+          setSubmitting(true);
+          try {
+            if (!turnstileToken) refreshTurnstileToken();
+            if (!await waitForTurnstileToken(15000)) {
+              errorEl.textContent = 'Verification unavailable — please try again';
+              return;
+            }
+            var headers = { 'Content-Type': 'application/json', 'X-Turnstile-Token': turnstileToken };
+            refreshTurnstileToken();
+            var resp = await fetch(SERVER + (creating ? '/api/users' : '/api/users/recover'), {
+              method: 'POST',
+              headers: headers,
+              body: JSON.stringify(payload)
+            });
+            if (resp.status === (creating ? 201 : 200)) {
+              var identity = await resp.json();
+              persistIdentity(identity);
+              clearPins();
+              overlay.style.display = 'none';
+              form.removeEventListener('submit', submit);
+              modeToggle.removeEventListener('click', toggleMode);
+              resolve(identity);
+            } else if (resp.status === 403) {
+              refreshTurnstileToken();
+              errorEl.textContent = 'Verification failed — please try again';
+            } else {
+              var message = creating ? 'Account creation failed' : 'Login failed';
+              try {
+                var problem = await resp.json();
+                message = problem.detail || message;
+              } catch (_) { /* retain a safe fallback for non-JSON responses */ }
+              errorEl.textContent = message;
+            }
+          } catch (_) {
+            errorEl.textContent = 'Network error — please try again';
+          } finally {
+            clearPins();
+            setSubmitting(false);
+          }
+        }
+
+        renderMode();
+        errorEl.textContent = initialError || '';
+        form.addEventListener('submit', submit);
+        modeToggle.addEventListener('click', toggleMode);
+        input.focus();
+      });
+    }
+
+    async function initIdentity() {
       var uuid = localStorage.getItem(LS_PREFIX + 'uuid');
-      if (!uuid) {
-        uuid = crypto.randomUUID();
-        localStorage.setItem(LS_PREFIX + 'uuid', uuid);
-      }
-      return uuid;
-    }
-
-    function showUsernameOverlay(uuid) {
-      var overlay = document.createElement('div');
-      overlay.className = 'bbw-overlay';
-      var modal = document.createElement('div');
-      modal.className = 'bbw-modal';
-      modal.innerHTML = '<h3>Choose a username</h3>';
-      var input = document.createElement('input');
-      input.type = 'text';
-      input.placeholder = '3-30 characters';
-      input.maxLength = 30;
-      var btn = document.createElement('button');
-      btn.textContent = 'Join';
-      var errorEl = document.createElement('div');
-      errorEl.className = 'bbw-modal-error';
-
-      modal.appendChild(input);
-      modal.appendChild(btn);
-      modal.appendChild(errorEl);
-      overlay.appendChild(modal);
-      root.appendChild(overlay);
-
-      setTimeout(function () { input.focus(); }, 100);
-
-      input.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter') btn.click();
-      });
-
-      btn.addEventListener('click', function () {
-        var username = input.value.trim();
-        errorEl.textContent = '';
-
-        if (username.length < 3 || username.length > 30) {
-          errorEl.textContent = 'Username must be 3-30 characters';
-          return;
-        }
-        if (username.toLowerCase() === 'you') {
-          errorEl.textContent = "Username 'You' is reserved";
-          return;
-        }
-
-        var headers = { 'Content-Type': 'application/json' };
-        if (turnstileToken) {
-          headers['X-Turnstile-Token'] = turnstileToken;
-          refreshTurnstileToken();
-        }
-
-        fetch(SERVER + '/api/users', {
-          method: 'POST',
-          headers: headers,
-          body: JSON.stringify({ uuid: uuid, username: username })
-        }).then(function (resp) {
-          if (resp.status === 201) {
-            localStorage.setItem(LS_PREFIX + 'username', username);
-            overlay.remove();
-          } else if (resp.status === 403) {
-            refreshTurnstileToken();
-            errorEl.textContent = 'Verification failed -- please try again';
-          } else {
-            return resp.json().then(function (err) {
-              errorEl.textContent = err.detail || 'Registration failed';
-            });
+      if (uuid) {
+        try {
+          var resp = await fetch(SERVER + '/api/users/reconnect', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ uuid: uuid })
+          });
+          if (resp.status === 200) {
+            var identity = await resp.json();
+            persistIdentity(identity);
+            return identity;
           }
-        }).catch(function () {
-          errorEl.textContent = 'Network error -- please try again';
-        });
-      });
-    }
-
-    function initIdentity() {
-      var uuid = getOrCreateUuid();
-      var username = localStorage.getItem(LS_PREFIX + 'username');
-      if (!username) {
-        showUsernameOverlay(uuid);
-      } else {
-        // Re-register silently in case DB was reset
-        var headers = { 'Content-Type': 'application/json' };
-        if (turnstileToken) {
-          headers['X-Turnstile-Token'] = turnstileToken;
-          refreshTurnstileToken();
+          if (resp.status !== 404) return showIdentityOverlay('Unable to reconnect — please reload to try again');
+        } catch (_) {
+          return showIdentityOverlay('Network error — please reload to reconnect');
         }
-        fetch(SERVER + '/api/users', {
-          method: 'POST',
-          headers: headers,
-          body: JSON.stringify({ uuid: uuid, username: username })
-        }).then(function (resp) {
-          if (resp.status === 403) {
-            refreshTurnstileToken();
-            return waitForTurnstileToken().then(function () {
-              var retryHeaders = { 'Content-Type': 'application/json' };
-              if (turnstileToken) {
-                retryHeaders['X-Turnstile-Token'] = turnstileToken;
-                refreshTurnstileToken();
-              }
-              return fetch(SERVER + '/api/users', {
-                method: 'POST',
-                headers: retryHeaders,
-                body: JSON.stringify({ uuid: uuid, username: username })
-              });
-            });
-          }
-        }).catch(function () { /* best effort */ });
       }
+      clearIdentity();
+      return showIdentityOverlay();
     }
 
     // ── Drag-to-place ─────────────────────────────────────────────────────────
@@ -1088,9 +1150,7 @@
     }
 
     // ── WebSocket ─────────────────────────────────────────────────────────────
-    function connectWebSocket() {
-      var uuid = getOrCreateUuid();
-
+    function connectWebSocket(uuid) {
       var client = new StompJs.Client({
         webSocketFactory: function () { return new SockJS(SERVER + '/ws'); },
         connectHeaders: { uuid: uuid },
@@ -1163,9 +1223,10 @@
     var turnstilePromise = initTurnstile();
 
     Promise.all([sockjsPromise, stompPromise, turnstilePromise]).then(function () {
+      return initIdentity();
+    }).then(function (identity) {
       setLoadingProgress(65, 'Connecting...');
-      connectWebSocket();
-      initIdentity();
+      connectWebSocket(identity.uuid);
     }).catch(function (err) {
       console.error('[BitBrush Widget] Failed to load dependencies:', err);
       statusText.textContent = 'failed to load';

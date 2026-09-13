@@ -46,6 +46,9 @@ test.describe('deterministic local browser harness', () => {
 
   test('loads the widget client with recorded local fakes', async ({ page }) => {
     const harness = await installRoutesFromNonSpecModule(page);
+    await page.addInitScript(() => {
+      localStorage.setItem('bitbrush_widget_uuid', '11111111-2222-4333-8444-555555555555');
+    });
 
     await page.goto(`${LOCAL_ORIGIN}/widget-host.html`);
 
