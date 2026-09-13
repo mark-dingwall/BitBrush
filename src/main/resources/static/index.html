@@ -282,7 +282,7 @@
       transform: translate(-50%, -50%) rotate(-45deg);
     }
 
-    /* Username modal */
+    /* Identity modal */
     #modal-overlay {
       display: none;
       position: fixed;
@@ -321,7 +321,21 @@
       font-size: 16px;
     }
 
-    #username-input {
+    #identity-form {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    #identity-form label {
+      display: block;
+      margin-bottom: 4px;
+      color: #aaaaaa;
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 16px;
+    }
+
+    #identity-form input {
       background: #111111;
       border: 1px solid rgba(255, 255, 255, 0.15);
       border-radius: 4px;
@@ -333,7 +347,7 @@
       width: 100%;
     }
 
-    #username-input:focus {
+    #identity-form input:focus {
       border-color: #00cccc;
     }
 
@@ -358,6 +372,21 @@
 
     #username-submit:hover {
       background: #00eeee;
+    }
+
+    #identity-mode-toggle {
+      background: none;
+      border: none;
+      color: #00cccc;
+      cursor: pointer;
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 14px;
+      padding: 4px 0;
+    }
+
+    #identity-form button:disabled {
+      cursor: wait;
+      opacity: 0.6;
     }
 
     /* Tooltip */
@@ -606,14 +635,28 @@
 </head>
 <body>
 
-  <!-- Username modal (shown when no username in LocalStorage) -->
+  <!-- Identity modal (shown when create or recovery is needed) -->
   <div id="modal-overlay">
     <div id="modal" role="dialog" aria-modal="true" aria-labelledby="modal-heading">
       <h2 id="modal-heading">Welcome to BitBrush</h2>
-      <p>Choose a username to start painting</p>
-      <input id="username-input" type="text" placeholder="username (3-30 chars)" maxlength="30">
-      <div id="modal-error"></div>
-      <button id="username-submit">Join</button>
+      <p id="modal-description">Choose a username and a four-character PIN to start painting</p>
+      <form id="identity-form">
+        <div>
+          <label for="username-input">Username</label>
+          <input id="username-input" type="text" placeholder="username (3-30 chars)" maxlength="30" autocomplete="username">
+        </div>
+        <div>
+          <label for="pin-input">PIN</label>
+          <input id="pin-input" type="password" autocomplete="new-password">
+        </div>
+        <div id="pin-confirmation-field">
+          <label for="pin-confirmation-input">Confirm PIN</label>
+          <input id="pin-confirmation-input" type="password" autocomplete="new-password">
+        </div>
+        <div id="modal-error" role="alert"></div>
+        <button id="username-submit" type="submit">Create account</button>
+        <button id="identity-mode-toggle" type="button">Already have one? Log in</button>
+      </form>
     </div>
   </div>
 
@@ -893,9 +936,9 @@
     }
 
     // ── Pixel info cache ────────────────────────────────────────────────────
-    const pixelInfoCache = new Map();   // authorUuid -> { username, placedAt, authorPixels: [{x,y}] }
-    const coordToAuthor = new Map();    // "x,y" string -> authorUuid
-    let currentHighlightAuthor = null;  // authorUuid of currently highlighted author
+    const pixelInfoCache = new Map();   // authorId -> { username, placedAt, authorPixels: [{x,y}] }
+    const coordToAuthor = new Map();    // "x,y" string -> authorId
+    let currentHighlightAuthor = null;  // public authorId of currently highlighted author
     const PIXEL_INFO_CACHE_MAX = 1000;
     const COORD_AUTHOR_CACHE_MAX = 5000;
 
@@ -1007,12 +1050,12 @@
 
     const debouncedFetchInfo = debounce(async (x, y, screenX, screenY) => {
       const key = x + ',' + y;
-      const cachedAuthorUuid = coordToAuthor.get(key);
-      if (cachedAuthorUuid && pixelInfoCache.has(cachedAuthorUuid)) {
-        const cached = pixelInfoCache.get(cachedAuthorUuid);
+      const cachedAuthorId = coordToAuthor.get(key);
+      if (cachedAuthorId && pixelInfoCache.has(cachedAuthorId)) {
+        const cached = pixelInfoCache.get(cachedAuthorId);
         showTooltip(cached, screenX, screenY);
         drawAuthorHighlight(cached.authorPixels);
-        currentHighlightAuthor = cachedAuthorUuid;
+        currentHighlightAuthor = cachedAuthorId;
         return;
       }
 
@@ -1027,17 +1070,17 @@
         }
         const info = await resp.json();
 
-        pixelInfoCache.set(info.authorUuid, info);
+        pixelInfoCache.set(info.authorId, info);
         evictOldest(pixelInfoCache, PIXEL_INFO_CACHE_MAX);
         for (const p of info.authorPixels) {
-          coordToAuthor.set(p.x + ',' + p.y, info.authorUuid);
+          coordToAuthor.set(p.x + ',' + p.y, info.authorId);
         }
         evictOldest(coordToAuthor, COORD_AUTHOR_CACHE_MAX);
 
         if (lastHoverX === x && lastHoverY === y) {
           showTooltip(info, screenX, screenY);
           drawAuthorHighlight(info.authorPixels);
-          currentHighlightAuthor = info.authorUuid;
+          currentHighlightAuthor = info.authorId;
         }
       } catch (err) {
         hideTooltip();
@@ -1562,14 +1605,13 @@
       announce('No pixels remaining');
     }
 
-    function connectWebSocket() {
+    function connectWebSocket(uuid) {
       const client = new StompJs.Client({
         webSocketFactory: () => new SockJS('/ws'),
-        connectHeaders: { uuid: localStorage.getItem('bitbrush_uuid') || '' },
+        connectHeaders: { uuid },
         reconnectDelay: 5000,
         heartbeatIncoming: 10000,
-        heartbeatOutgoing: 10000,
-        debug: (str) => console.log('[STOMP]', str)
+        heartbeatOutgoing: 10000
       });
 
       client.onConnect = () => {
@@ -1589,7 +1631,7 @@
           } else {
             // Normal pixel: smart cache invalidation (existing logic)
             const previousAuthor = coordToAuthor.get(coordKey);
-            const newAuthor = p.authorUuid;
+            const newAuthor = p.authorId;
             if (previousAuthor && previousAuthor !== newAuthor) {
               pixelInfoCache.delete(previousAuthor);
             }
@@ -1645,103 +1687,157 @@
       return client;
     }
 
-    // ── Identity / username modal ─────────────────────────────────────────────
-    function getOrCreateUuid() {
-      let uuid = localStorage.getItem('bitbrush_uuid');
-      if (!uuid) {
-        uuid = crypto.randomUUID();
-        localStorage.setItem('bitbrush_uuid', uuid);
-      }
-      return uuid;
+    // ── Identity / create and recovery modal ──────────────────────────────────
+    function persistIdentity(identity) {
+      localStorage.setItem('bitbrush_uuid', identity.uuid);
+      localStorage.setItem('bitbrush_username', identity.username);
     }
 
-    function showModal(uuid) {
-      const overlay = document.getElementById('modal-overlay');
-      overlay.style.display = 'flex';
+    function clearIdentity() {
+      localStorage.removeItem('bitbrush_uuid');
+      localStorage.removeItem('bitbrush_username');
+    }
 
-      const input    = document.getElementById('username-input');
-      const errorEl  = document.getElementById('modal-error');
-      const submitBtn = document.getElementById('username-submit');
+    function showModal(initialError = '') {
+      return new Promise((resolve) => {
+        const overlay = document.getElementById('modal-overlay');
+        const form = document.getElementById('identity-form');
+        const input = document.getElementById('username-input');
+        const pinInput = document.getElementById('pin-input');
+        const confirmationInput = document.getElementById('pin-confirmation-input');
+        const confirmationField = document.getElementById('pin-confirmation-field');
+        const errorEl = document.getElementById('modal-error');
+        const submitBtn = document.getElementById('username-submit');
+        const modeToggle = document.getElementById('identity-mode-toggle');
+        const description = document.getElementById('modal-description');
+        let mode = 'create';
+        let submitting = false;
 
-      // Focus the input after modal opens
-      setTimeout(() => input.focus(), 100);
-
-      // Allow Enter key to submit
-      input.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') submitBtn.click();
-      });
-
-      submitBtn.addEventListener('click', async () => {
-        const username = input.value.trim();
-        errorEl.textContent = '';
-
-        if (username.length < 3 || username.length > 30) {
-          errorEl.textContent = 'Username must be 3-30 characters';
-          return;
+        function clearPins() {
+          pinInput.value = '';
+          confirmationInput.value = '';
         }
 
-        if (username.toLowerCase() === 'you') {
-          errorEl.textContent = "Username 'You' is reserved";
-          return;
+        function renderMode() {
+          const creating = mode === 'create';
+          clearPins();
+          errorEl.textContent = '';
+          confirmationField.hidden = !creating;
+          confirmationInput.disabled = !creating;
+          pinInput.autocomplete = creating ? 'new-password' : 'current-password';
+          submitBtn.textContent = creating ? 'Create account' : 'Log in';
+          modeToggle.textContent = creating ? 'Already have one? Log in' : 'Need an account? Create one';
+          description.textContent = creating
+            ? 'Choose a username and a four-character PIN to start painting'
+            : 'Enter your username and PIN to recover your account';
         }
 
-        try {
-          const resp = await fetch('/api/users', {
-            method: 'POST',
-            headers: turnstileHeaders(),
-            body: JSON.stringify({ uuid, username })
-          });
+        function toggleMode() {
+          if (submitting) return;
+          mode = mode === 'create' ? 'recover' : 'create';
+          renderMode();
+          input.focus();
+        }
 
-          if (resp.status === 201) {
-            localStorage.setItem('bitbrush_username', username);
-            overlay.style.display = 'none';
-            // Show hint overlay for first-time users
-            setTimeout(showHintOverlay, 300);
-          } else if (resp.status === 403) {
-            refreshTurnstile();
-            errorEl.textContent = 'Verification failed — please try again';
-          } else {
-            let msg = 'Registration failed';
-            try {
-              const err = await resp.json();
-              msg = err.detail || msg;
-            } catch (_) { /* ignore parse error */ }
-            errorEl.textContent = msg;
+        function setSubmitting(value) {
+          submitting = value;
+          input.disabled = value;
+          pinInput.disabled = value;
+          confirmationInput.disabled = value || mode !== 'create';
+          submitBtn.disabled = value;
+          modeToggle.disabled = value;
+        }
+
+        async function submit(event) {
+          event.preventDefault();
+          if (submitting) return;
+          const username = input.value.trim();
+          errorEl.textContent = '';
+
+          if (username.length < 3 || username.length > 30 || username.toLowerCase() === 'you') {
+            errorEl.textContent = username.toLowerCase() === 'you'
+              ? "Username 'You' is reserved" : 'Username must be 3-30 characters';
+            clearPins();
+            return;
           }
-        } catch (err) {
-          errorEl.textContent = 'Network error — please try again';
-          console.error('User registration error:', err);
+
+          // PINs are opaque, transient strings; validation and canonicalization belong to the server.
+          const creating = mode === 'create';
+          const payload = creating
+            ? { uuid: crypto.randomUUID(), username, pin: pinInput.value, pinConfirmation: confirmationInput.value }
+            : { username, pin: pinInput.value };
+          setSubmitting(true);
+          try {
+            if (!turnstileToken) refreshTurnstile();
+            if (!await waitForTurnstileToken(15000)) {
+              errorEl.textContent = 'Verification unavailable — please try again';
+              return;
+            }
+            const resp = await fetch(creating ? '/api/users' : '/api/users/recover', {
+              method: 'POST',
+              headers: turnstileHeaders(),
+              body: JSON.stringify(payload)
+            });
+
+            if (resp.status === (creating ? 201 : 200)) {
+              const identity = await resp.json();
+              persistIdentity(identity);
+              clearPins();
+              overlay.style.display = 'none';
+              form.removeEventListener('submit', submit);
+              modeToggle.removeEventListener('click', toggleMode);
+              resolve(identity);
+              setTimeout(showHintOverlay, 300);
+            } else if (resp.status === 403) {
+              refreshTurnstile();
+              errorEl.textContent = 'Verification failed — please try again';
+            } else {
+              let message = creating ? 'Account creation failed' : 'Login failed';
+              try {
+                const problem = await resp.json();
+                message = problem.detail || message;
+              } catch (_) { /* retain a safe fallback for non-JSON responses */ }
+              errorEl.textContent = message;
+            }
+          } catch (_) {
+            errorEl.textContent = 'Network error — please try again';
+          } finally {
+            clearPins();
+            setSubmitting(false);
+          }
         }
+
+        renderMode();
+        errorEl.textContent = initialError;
+        overlay.style.display = 'flex';
+        form.addEventListener('submit', submit);
+        modeToggle.addEventListener('click', toggleMode);
+        input.focus();
       });
     }
 
     async function initIdentity() {
-      const uuid = getOrCreateUuid();
-      const username = localStorage.getItem('bitbrush_username');
-      if (!username) {
-        await waitForTurnstileToken(15000);
-        showModal(uuid);
-      } else {
-        // Re-register silently — server skips Turnstile for existing users
+      const uuid = localStorage.getItem('bitbrush_uuid');
+      if (uuid) {
         try {
-          const resp = await fetch('/api/users', {
+          const resp = await fetch('/api/users/reconnect', {
             method: 'POST',
-            headers: turnstileHeaders(),
-            body: JSON.stringify({ uuid, username })
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ uuid })
           });
-          if (resp.status === 403) {
-            // DB was likely wiped — need fresh Turnstile token
-            await waitForTurnstileToken(15000);
-            await fetch('/api/users', {
-              method: 'POST',
-              headers: turnstileHeaders(),
-              body: JSON.stringify({ uuid, username })
-            });
+          if (resp.status === 200) {
+            const identity = await resp.json();
+            persistIdentity(identity);
+            showHintOverlay();
+            return identity;
           }
-        } catch (_) { /* best effort */ }
-        // Show hints if returning user hasn't seen them
-        showHintOverlay();
+          if (resp.status !== 404) return showModal('Unable to reconnect — please reload to try again');
+        } catch (_) {
+          return showModal('Network error — please reload to reconnect');
+        }
       }
+      clearIdentity();
+      return showModal();
     }
 
     // ── Zoom handler (scroll wheel) ──────────────────────────────────────────
@@ -2464,7 +2560,12 @@
     const modalOverlay = document.getElementById('modal-overlay');
     modalOverlay.addEventListener('keydown', (e) => {
       if (e.key === 'Tab') {
-        const focusable = modalOverlay.querySelectorAll('input, button, [tabindex]:not([tabindex="-1"])');
+        const focusable = [...modalOverlay.querySelectorAll('input, button, [tabindex]:not([tabindex="-1"])')]
+          .filter(element => !element.disabled && element.getClientRects().length > 0);
+        if (focusable.length === 0) {
+          e.preventDefault();
+          return;
+        }
         const first = focusable[0];
         const last = focusable[focusable.length - 1];
         if (e.shiftKey && document.activeElement === first) {
@@ -2500,12 +2601,12 @@
       }
 
       setLoadingProgress(30, 'Registering...');
-      await initIdentity();
+      const identity = await initIdentity();
       setLoadingProgress(60, 'Loading canvas...');
       await loadCanvas();
       dismissLoading();
       applyTransform();  // re-draw grid over loaded pixels
-      connectWebSocket();
+      connectWebSocket(identity.uuid);
       fetchStats();
       setInterval(fetchStats, 30000);
 

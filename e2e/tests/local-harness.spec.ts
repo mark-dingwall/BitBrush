@@ -21,11 +21,16 @@ test.describe('deterministic local browser harness', () => {
 
   test('loads the full-page client with recorded local fakes', async ({ page }) => {
     const harness = await installRoutesFromNonSpecModule(page);
+    await page.addInitScript(() => {
+      localStorage.setItem('bitbrush_uuid', '11111111-2222-4333-8444-555555555555');
+    });
 
     await page.goto(`${LOCAL_ORIGIN}/index.html`);
 
     await expect(page.locator('#canvas')).toBeVisible();
     await expect.poll(() => readBitbrushTestState(page).then(state => state?.stomp.subscriptions.length ?? 0)).toBe(5);
+    // UUID reconnect does not wait for the independent Turnstile script.
+    await expect.poll(() => readBitbrushTestState(page).then(state => state?.turnstile.renders.length ?? 0)).toBe(1);
     const state = await readBitbrushTestState(page);
     expect(state.turnstile.renders).toEqual([{ sitekey: '0x4AAAAAACwHh6lB9uQESFQA' }]);
     expect(state.stomp.constructorArgs).toHaveLength(1);

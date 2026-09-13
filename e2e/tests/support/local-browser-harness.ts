@@ -10,8 +10,9 @@ export interface BitbrushTestState {
     connectHeaders: Array<Record<string, string>>;
     subscriptions: string[];
     injectedMessages: Array<{ destination: string; body: string }>;
+    deliver?: (destination: string, payload: unknown) => void;
   };
-  turnstile: { renders: Array<{ sitekey: string }> };
+  turnstile: { renders: Array<{ sitekey: string }>; resets?: number[]; expire?: () => void };
 }
 
 export interface LocalBrowserHarness {
@@ -43,11 +44,17 @@ const FAKE_STOMP = `
       sockjs: [], stomp: { constructorArgs: [], activations: [], connectHeaders: [], subscriptions: [], injectedMessages: [] }, turnstile: { renders: [] }
     };
     const bodies = {
-      '/topic/pixels': '{"x":1,"y":2,"color":"#00CC00"}',
+      '/topic/pixels': '{"x":1,"y":2,"color":"#00CC00","authorId":"author_local","erased":false}',
       '/topic/users/count': '1',
       '/app/users/count': '1',
       '/user/queue/bank': '{"balance":3,"maxBalance":5,"secondsUntilNextPoint":30}',
       '/app/bank': '{"balance":3,"maxBalance":5,"secondsUntilNextPoint":30}'
+    };
+    const subscribers = new Map();
+    state.stomp.deliver = (destination, payload) => {
+      const body = JSON.stringify(payload);
+      state.stomp.injectedMessages.push({ destination, body });
+      for (const callback of subscribers.get(destination) || []) callback({ body });
     };
     class Client {
       constructor(options) {
@@ -62,12 +69,15 @@ const FAKE_STOMP = `
       }
       subscribe(destination, callback) {
         state.stomp.subscriptions.push(destination);
+        const callbacks = subscribers.get(destination) || new Set();
+        callbacks.add(callback);
+        subscribers.set(destination, callbacks);
         if (Object.hasOwn(bodies, destination)) {
           const body = bodies[destination];
           state.stomp.injectedMessages.push({ destination, body });
           callback({ body });
         }
-        return { id: destination, unsubscribe() {} };
+        return { id: destination, unsubscribe() { callbacks.delete(callback); } };
       }
       deactivate() { return Promise.resolve(); }
     }
@@ -80,13 +90,24 @@ const FAKE_TURNSTILE = `
     const state = window.__bitbrushTest ||= {
       sockjs: [], stomp: { constructorArgs: [], activations: [], connectHeaders: [], subscriptions: [], injectedMessages: [] }, turnstile: { renders: [] }
     };
+    const widgets = [];
+    let tokenGeneration = 0;
+    const issueToken = options => queueMicrotask(() => options.callback && options.callback('local-turnstile-token-' + ++tokenGeneration));
+    state.turnstile.resets = [];
+    state.turnstile.expire = () => {
+      for (const options of widgets) options['expired-callback'] && options['expired-callback']();
+    };
     window.turnstile = {
       render(container, options) {
         state.turnstile.renders.push({ sitekey: options.sitekey });
-        queueMicrotask(() => options.callback && options.callback('local-turnstile-token'));
+        widgets.push(options);
+        issueToken(options);
         return state.turnstile.renders.length;
       },
-      reset() {}
+      reset(widgetId) {
+        state.turnstile.resets.push(widgetId);
+        if (widgets[widgetId - 1]) issueToken(widgets[widgetId - 1]);
+      }
     };
   })();
 `;
@@ -125,8 +146,12 @@ export async function installLocalBrowserHarness(
       await route.fulfill({ contentType: 'application/json', body: '{"totalPixels":0,"colorDistribution":[]}' });
       return;
     }
-    if (pathname === '/api/users') {
-      await route.fulfill({ contentType: 'application/json', body: '{"username":"Local Tester"}' });
+    if (pathname === '/api/users' || pathname === '/api/users/reconnect') {
+      const { uuid } = route.request().postDataJSON();
+      await route.fulfill({
+        status: pathname === '/api/users' ? 201 : 200,
+        json: { uuid, username: 'Local_Tester' },
+      });
       return;
     }
     await route.fulfill({ status: 204 });
@@ -136,4 +161,14 @@ export async function installLocalBrowserHarness(
 
 export function readBitbrushTestState(page: Page): Promise<BitbrushTestState | undefined> {
   return page.evaluate(() => window.__bitbrushTest);
+}
+
+export function deliverStompMessage(page: Page, destination: string, payload: unknown): Promise<void> {
+  return page.evaluate(({ destination, payload }) => {
+    window.__bitbrushTest.stomp.deliver(destination, payload);
+  }, { destination, payload });
+}
+
+export function expireTurnstile(page: Page): Promise<void> {
+  return page.evaluate(() => window.__bitbrushTest.turnstile.expire());
 }
