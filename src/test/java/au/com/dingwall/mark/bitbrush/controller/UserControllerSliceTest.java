@@ -22,6 +22,7 @@ import java.util.Map;
 import java.util.stream.Stream;
 
 import static org.hamcrest.Matchers.hasSize;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -82,7 +83,20 @@ class UserControllerSliceTest {
             .andExpect(jsonPath("$.pinHash").doesNotExist());
         if (operation.equals("recover")) {
             verify(clientIps).resolve(any());
-            verify(identities).recover(new UserRecoveryRequest("Artist", PIN), "token", ip);
+            // Inspect calls without Mockito's failure renderer, which includes credential-bearing arguments.
+            var recoveryCalls = mockingDetails(identities).getInvocations().stream()
+                .filter(invocation -> invocation.getMethod().getName().equals("recover"))
+                .toList();
+            assertTrue(recoveryCalls.size() == 1, "Recovery workflow must be invoked exactly once");
+            var recoveryCall = recoveryCalls.getFirst();
+            assertTrue(recoveryCall.getArgument(0) instanceof UserRecoveryRequest,
+                "Recovery workflow received an invalid request");
+            UserRecoveryRequest recoveryRequest = recoveryCall.getArgument(0);
+            assertTrue("Artist".equals(recoveryRequest.username()), "Recovery workflow received the wrong username");
+            assertTrue(PIN.equals(recoveryRequest.pin()), "Recovery workflow received the wrong PIN");
+            assertTrue("token".equals(recoveryCall.getArgument(1)),
+                "Recovery workflow received the wrong bot-verification token");
+            assertTrue(ip.equals(recoveryCall.getArgument(2)), "Recovery workflow received the wrong client address");
         } else {
             verifyNoInteractions(clientIps);
         }
