@@ -15,6 +15,7 @@
 - A PIN is case-sensitive and must canonicalize to exactly four Unicode code points.
 - Canonicalization is NFC, then replaces every `Cc`, `Cf`, `Zs`, `Zl`, and `Zp` code point with U+0020; spaces remain significant and unpaired surrogates are rejected.
 - PIN inputs are never stored by either client and never appear in URLs, logs, responses, metrics, tracing attributes, or test output.
+- Secret-absence tests use boolean/index checks with constant failure diagnostics so neither the forbidden operand nor captured output is printed when an assertion fails.
 - Credential input is HMAC-SHA-256 over `bitbrush-pin-v1` plus canonical UTF-8 using a server-wide pepper, then Argon2id with a unique salt.
 - `PIN_PEPPER` is Base64-encoded, decodes to at least 32 bytes, is mandatory in docker/prod, and has explicit non-production dev/test values.
 - Argon2id production defaults are 19,456 KiB memory, 2 iterations, parallelism 1, 32-byte output, and at most two concurrent operations; calibration may increase but never reduce these values.
@@ -28,6 +29,7 @@
 - Every response containing a private UUID has `Cache-Control: no-store`.
 - Existing UUID-shaped public author IDs remain public history only and must fail every bearer-credential path.
 - Turnstile verification state lasts for the process lifetime; disconnect never clears it.
+- Supported profiles keep `org.springframework.messaging.simp` and `org.springframework.web.socket.messaging` at INFO or higher; deliberately overriding those framework namespaces to DEBUG/TRACE is unsupported because Spring itself renders native headers and Principals there.
 - Banking earns once per unique `SimpUserRegistry` principal, regardless of that principal's session count.
 - The widget remains standalone and dependency-free; the two clients may mirror small identity UI code.
 - Database/filesystem rollout is one cohesive feature because no intermediate production schema is safe for mixed old/new application writes.
@@ -192,7 +194,7 @@
 
 - [ ] **Step 2: Implement atomic rolling windows**
 
-  Use one coordination lock per map around every admission, existing-key update, clear, expired-key removal, and capacity-delay snapshot. Store immutable timestamp deques as map values, prune timestamps `<= now.minus(recoveryWindow)`, reject before adding when the configured applicable limit is already present, and compute ceiling seconds for `Retry-After`. Only the locked admission path may transform absent to present, and it publishes the first timestamp before releasing the lock; there is no separate reserved-but-unpublished state or remove/recreate path outside the boundary. After pruning, capacity exhaustion computes its generic `RecoveryCapacityException.retryAfterSeconds` as `min(last timestamp for each live key + recoveryWindow) - now`, rounded up, because a capacity slot is freed only when an entire key expires. Thus every recovery `429` has an applicable remaining delay without disclosing the dimension. Expose package-private `cleanupExpired()` for deterministic tests and scheduled opportunistic cleanup.
+  Use one coordination lock per map around every admission, existing-key update, clear, expired-key removal, and capacity-delay snapshot. Acquire the applicable lock, then sample exactly one `Instant now = clock.instant()` for pruning, insertion, and delay calculation in that operation. Store immutable timestamp deques as map values, prune timestamps `<= now.minus(recoveryWindow)`, reject before adding when the configured applicable limit is already present, and compute ceiling seconds for `Retry-After`. Only the locked admission path may transform absent to present, and it publishes the first timestamp before releasing the lock; there is no separate reserved-but-unpublished state or remove/recreate path outside the boundary. Ordinary throttle delay is `ceil(oldest retained timestamp + recoveryWindow - now)`; capacity delay is `ceil(min(newest timestamp per live key + recoveryWindow) - now)` because a capacity slot is freed only when an entire key expires. Thus every recovery `429` has an applicable remaining delay without disclosing the dimension. Expose package-private `cleanupExpired()` for deterministic tests and scheduled opportunistic cleanup.
 
 - [ ] **Step 3: Run focused tests and commit**
 
@@ -389,7 +391,7 @@ Tasks 4–6 are one atomic implementation work package owned by one subagent bec
 
 - [ ] **Step 4: Add captured-log privacy tests and remove sensitive logging**
 
-  At DEBUG/TRACE exercise create, reconnect, recover, failed reconnect, pixel placement, and exception rendering. Seed unique marker values for private UUID, PIN, encoded hash, and pepper, then assert none occurs in captured output or ProblemDetail JSON. Logs may contain counts and public author IDs only. Task 7 extends this same test across its STOMP and banking ownership after removing those components' credential-bearing logs.
+  At DEBUG/TRACE exercise create, reconnect, recover, failed reconnect, pixel placement, and exception rendering. Seed unique marker values for private UUID, PIN, encoded hash, and pepper, then assert none occurs in captured output or ProblemDetail JSON. Use boolean/index-based assertions with constant diagnostics; never use an assertion form that includes the captured output or forbidden operand in failure output. Logs may contain counts and public author IDs only. Task 7 extends this same test across its STOMP and banking ownership after removing those components' credential-bearing logs.
 
 - [ ] **Step 5: Run HTTP/privacy tests and commit**
 
@@ -433,7 +435,7 @@ Tasks 4–6 are one atomic implementation work package owned by one subagent bec
 
 - [ ] **Step 3: Add interceptor unit/integration cases for both connection commands**
 
-  Cover known canonical private UUID, missing, blank, malformed, public author ID, unknown UUID, and repository failure for both `CONNECT` and `STOMP`. Assert rejected cases receive an ERROR or transport close, no `SessionConnectEvent`/CONNECTED frame, and never call `markVerified`; accepted cases expose the expected Principal and call `markVerified` synchronously. Add valid and invalid single-WebSocket-message pipelines containing `CONNECT + SEND/SUBSCRIBE`, proving follow-on frames cannot outrun or bypass handshake authentication. Under the supported logger configuration, run application packages at TRACE while keeping `org.springframework.messaging.simp` and `org.springframework.web.socket.messaging` at INFO or higher, and assert the captured combined logs never contain the submitted UUID; retain an ERROR-level framework assertion for the invalid pipeline.
+  Cover known canonical private UUID, missing, blank, malformed, public author ID, unknown UUID, and repository failure for both `CONNECT` and `STOMP`. Assert rejected cases receive an ERROR or transport close, no `SessionConnectEvent`/CONNECTED frame, and never call `markVerified`; accepted cases expose the expected Principal and call `markVerified` synchronously. Add valid and invalid single-WebSocket-message pipelines containing `CONNECT + SEND/SUBSCRIBE`, proving follow-on frames cannot outrun or bypass handshake authentication. Under the supported profile configuration, run application packages at TRACE while keeping `org.springframework.messaging.simp` and `org.springframework.web.socket.messaging` at INFO or higher, and assert the captured combined logs never contain the submitted UUID; retain an ERROR-level framework assertion for the invalid pipeline. Treat higher-precedence operator overrides that lower either Spring namespace below INFO as unsupported security configuration and document that boundary rather than adding runtime logging-policy machinery.
 
 - [ ] **Step 4: Implement synchronous STOMP authentication**
 
@@ -456,7 +458,7 @@ Tasks 4–6 are one atomic implementation work package owned by one subagent bec
   Expected: PASS without timing sleeps used as correctness gates.
 
   ```bash
-  git add src/main/java src/test/java
+  git add src/main/java src/main/resources/application-*.properties src/test/java
   git commit -m "feat: authenticate STOMP identities and support multiple sessions"
   ```
 
