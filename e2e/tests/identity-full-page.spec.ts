@@ -108,6 +108,39 @@ test('switches the two identity modes and clears masked fields without creating 
   await expectNoStomp(page);
 });
 
+for (const mode of ['create', 'recover']) {
+  test(`keeps ${mode} usable after scrolling the identity dialog on a short viewport`, async ({ page }) => {
+    // Break: a vertically centered, unbounded dialog leaves the login action below the viewport without scrolling.
+    await page.setViewportSize({ width: 667, height: 375 });
+    await installLocalBrowserHarness(page);
+    await page.route(mode === 'create' ? '**/api/users' : '**/api/users/recover', route => route.fulfill({
+      status: mode === 'create' ? 201 : 200,
+      json: { uuid: SERVER_UUID, username: 'Short_Viewport_Painter' },
+    }));
+    await page.goto('/index.html');
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await page.mouse.move(333, 187);
+    await page.mouse.wheel(0, 600);
+    const loginToggle = page.getByRole('button', { name: 'Already have one? Log in' });
+    await expect(loginToggle).toBeInViewport({ ratio: 1 });
+    await loginToggle.click();
+
+    if (mode === 'create') {
+      await page.getByRole('button', { name: 'Need an account? Create one' }).click();
+      await fillCreate(page);
+      await page.getByRole('button', { name: 'Create account', exact: true }).click();
+    } else {
+      await page.getByLabel('Username', { exact: true }).fill('Painter');
+      await page.getByLabel('PIN', { exact: true }).fill(PIN);
+      await page.getByRole('button', { name: 'Log in', exact: true }).click();
+    }
+    await expect(page.getByRole('dialog')).toBeHidden();
+    await expectClearedPins(page);
+    await expectStoredIdentity(page, SERVER_UUID, 'Short_Viewport_Painter');
+    await expectConnectedAs(page, SERVER_UUID);
+  });
+}
+
 test('creates with opaque Unicode PINs and waits for the authoritative response before STOMP', async ({ page }) => {
   // Break: modifying PIN strings, missing confirmation, persisting the proposed UUID, or connecting before creation resolves.
   const reply = deferred();
