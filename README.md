@@ -194,4 +194,4 @@ npx playwright install chromium
 npm run test:production
 ```
 
-Provision `BITBRUSH_E2E_UUID` through your secret mechanism first; setup fails immediately if it is missing or malformed. Only the private UUID is preloaded, and `/api/users/reconnect` supplies the authoritative username. This suite is deliberately separate from local tests and is not a default CI gate.
+Provision `BITBRUSH_E2E_UUID` through your secret mechanism first; setup fails immediately if it is missing. Only the private UUID is preloaded, and `/api/users/reconnect` supplies the authoritative username. This suite is deliberately separate from local tests and is not a default CI gate.

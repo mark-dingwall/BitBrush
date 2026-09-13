@@ -97,9 +97,9 @@ test.describe('BitBrush Widget on Production Site', () => {
     const overlay = page.locator('.bbw-overlay');
     await expect(overlay).toBeVisible({ timeout: 15000 });
 
-    // Input and button should be present
-    await expect(overlay.locator('input')).toBeVisible();
-    await expect(overlay.locator('button')).toBeVisible();
+    // The create controls should be present (other PIN and mode controls also exist).
+    await expect(overlay.getByLabel('Username', { exact: true })).toBeVisible();
+    await expect(overlay.getByRole('button', { name: 'Create account', exact: true })).toBeVisible();
   });
 
   test('REST API CORS works from production domain', async ({ page }) => {

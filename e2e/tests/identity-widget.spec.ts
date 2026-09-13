@@ -110,6 +110,9 @@ test('switches the two identity modes and clears masked fields without creating 
   await installWidgetHarness(page);
   await page.goto('/widget-host.html');
   await expect(page.getByRole('button', { name: 'Create account', exact: true })).toBeVisible();
+  await expect(page.getByLabel('Username', { exact: true })).toBeVisible();
+  expect(await page.getByLabel('Username', { exact: true }).count()).toBe(1);
+  expect(await page.getByRole('button', { name: 'Create account', exact: true }).count()).toBe(1);
   await expectEmptyIdentity(page);
   await expectNoStomp(page);
   await fillCreate(page);

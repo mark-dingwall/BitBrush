@@ -37,3 +37,9 @@ Observed result: exit code `1`, with `Error: BITBRUSH_E2E_UUID is required` repo
 ## Concerns
 
 The full production smoke suite was intentionally not run: doing so requires the provisioned identity and would navigate to the deployed site. Only the mandated local fail-fast path was executed.
+
+## Follow-up review fixes
+
+- The no-identity smoke now targets the singular named Username field and Create account button; the deterministic local identity-widget check asserts both selectors are singular and visible.
+- README wording now says setup fails when `BITBRUSH_E2E_UUID` is missing; it makes no malformed-value claim.
+- Verification: `npm run test:local -- --grep "switches the two identity modes"` passed (2 tests); `env -u BITBRUSH_E2E_UUID npm run test:production` exited 1 with the required fail-fast message. No production navigation was attempted.
