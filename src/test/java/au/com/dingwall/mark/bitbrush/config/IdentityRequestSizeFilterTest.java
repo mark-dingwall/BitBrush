@@ -89,6 +89,24 @@ class IdentityRequestSizeFilterTest {
     }
 
     @ParameterizedTest
+    @ValueSource(strings = {
+        "/bitbrush/api/users;v=1", "/bitbrush/api/%75sers",
+        "/bitbrush/api/users/reconnect;v=1", "/bitbrush/api/users/%72econnect",
+        "/bitbrush/api/users/recover;v=1", "/bitbrush/api/users/%72ecover"
+    })
+    void rejectsOversizedBodiesForContextRelativeMvcEquivalentIdentityPaths(String path) throws Exception {
+        MockHttpServletRequest request = request("POST", path, new byte[4_097]);
+        request.setContextPath("/bitbrush");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        CapturingFilterChain chain = new CapturingFilterChain();
+
+        filter().doFilter(request, response, chain);
+
+        assertThat(chain.invoked).isFalse();
+        assertThat(response.getStatus()).isEqualTo(413);
+    }
+
+    @ParameterizedTest
     @ValueSource(strings = {"GET /api/users", "POST /api/pixels"})
     void passesNonIdentityRequestsThroughUntouched(String requestLine) throws Exception {
         String[] parts = requestLine.split(" ");

@@ -11,6 +11,7 @@ import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.MediaType;
 import org.springframework.http.server.PathContainer;
+import org.springframework.http.server.RequestPath;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 import org.springframework.web.util.pattern.PathPattern;
@@ -61,7 +62,8 @@ public class IdentityRequestSizeFilter extends OncePerRequestFilter {
         if (!"POST".equals(request.getMethod())) {
             return false;
         }
-        PathContainer path = PathContainer.parsePath(request.getRequestURI());
+        PathContainer path = RequestPath.parse(request.getRequestURI(), request.getContextPath())
+            .pathWithinApplication();
         return IDENTITY_PATHS.stream().anyMatch(pattern -> pattern.matches(path));
     }
 
