@@ -71,12 +71,12 @@ public class SecureExportPublisher {
                     if (existing != null) {
                         requirePrivateFile(existing, effectiveUid);
                         requireIdenticalContent(target, expectedContent);
-                        removeStaleTemporaries(directory, temporary, effectiveUid);
+                        removeStaleTemporaries(directory, temporary, target, effectiveUid);
                         directoryChannel.force(true);
                         return;
                     }
 
-                    removeStaleTemporaries(directory, temporary, effectiveUid);
+                    removeStaleTemporaries(directory, temporary, target, effectiveUid);
                     ByteBuffer bytes = ByteBuffer.wrap(expectedContent);
                     while (bytes.hasRemaining()) output.write(bytes);
                     output.force(true);
@@ -127,10 +127,11 @@ public class SecureExportPublisher {
         }
     }
 
-    private void removeStaleTemporaries(Path directory, Path currentTemporary, int effectiveUid) throws IOException {
+    private void removeStaleTemporaries(Path directory, Path currentTemporary, Path target, int effectiveUid) throws IOException {
         try (var entries = Files.newDirectoryStream(directory)) {
             for (Path entry : entries) {
-                if (entry.equals(currentTemporary) || !TEMPORARY_NAME.matcher(entry.getFileName().toString()).matches()) {
+                if (entry.equals(target) || entry.equals(currentTemporary)
+                        || !TEMPORARY_NAME.matcher(entry.getFileName().toString()).matches()) {
                     continue;
                 }
                 UnixAttributes attributes = attributesIfPresent(entry);

@@ -98,6 +98,21 @@ class SecureExportPublisherTest {
         assertEquals(List.of("export.tsv"), names());
     }
 
+    @Test
+    void repeatedPublicationPreservesTargetNamedLikeARecognizableTemporary() throws Exception {
+        target = directory.resolve(STALE_NAME);
+        publisher.publish(target, CONTENT);
+        Object originalInode = Files.getAttribute(target, "unix:ino");
+        privateFile(directory.resolve(".bitbrush-pin-export-aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee.tmp"), new byte[]{1});
+
+        publisher.publish(target, CONTENT);
+
+        assertTrue(Files.isRegularFile(target), "Stale cleanup removed the configured export target");
+        assertEquals(originalInode, Files.getAttribute(target, "unix:ino"));
+        assertTrue(Arrays.equals(CONTENT, Files.readAllBytes(target)), "Restart changed the configured export target");
+        assertEquals(List.of(STALE_NAME), names());
+    }
+
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
     void preservesMismatchedExistingExport(boolean sameLength) throws Exception {
