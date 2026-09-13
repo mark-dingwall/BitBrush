@@ -7,7 +7,6 @@ import au.com.dingwall.mark.bitbrush.dto.PixelCoordinate;
 import au.com.dingwall.mark.bitbrush.dto.PixelInfoResponse;
 import au.com.dingwall.mark.bitbrush.dto.PixelPlacementRequest;
 import au.com.dingwall.mark.bitbrush.dto.StatsResponse;
-import au.com.dingwall.mark.bitbrush.dto.UserRegistrationRequest;
 import au.com.dingwall.mark.bitbrush.exception.InsufficientBalanceException;
 import au.com.dingwall.mark.bitbrush.exception.UserNotFoundException;
 import au.com.dingwall.mark.bitbrush.model.Pixel;
@@ -27,7 +26,7 @@ import java.util.Optional;
  * Business logic for the shared pixel canvas.
  *
  * Responsibilities: retrieving current canvas state, placing pixels (with
- * palette validation), and registering users.
+ * palette validation).
  */
 @Service
 public class PixelService {
@@ -82,9 +81,7 @@ public class PixelService {
             throw new IllegalArgumentException("paletteIndex out of range");
         }
 
-        if (!userRepository.existsById(request.authorUuid())) {
-            throw new UserNotFoundException(request.authorUuid());
-        }
+        User user = userRepository.findById(request.authorUuid()).orElseThrow(UserNotFoundException::new);
 
         int deducted = bankingService.deductPoints(request.authorUuid(), request.pixels().size());
         if (deducted == 0) {
@@ -101,50 +98,29 @@ public class PixelService {
                     pixel.setX(coord.x());
                     pixel.setY(coord.y());
                     pixel.setPaletteIndex(request.paletteIndex());
-                    pixel.setAuthorUuid(request.authorUuid());
+                    pixel.setAuthorId(user.getAuthorId());
                     pixel.setPlacedAt(Instant.now());
                     return pixel;
                 })
                 .toList();
 
         pixelRepository.saveAll(pixels);
-        log.debug("Saved {} pixels by uuid={} (requested={}, deducted={})",
-                pixels.size(), request.authorUuid(), request.pixels().size(), deducted);
+        log.debug("Saved {} pixels by authorId={} (requested={}, deducted={})",
+                pixels.size(), user.getAuthorId(), request.pixels().size(), deducted);
 
         boolean isEraser = request.paletteIndex() == 0;
         String hexColor = colorPalette.get(request.paletteIndex());
         for (PixelCoordinate coord : pixelsToPlace) {
             messagingTemplate.convertAndSend("/topic/pixels",
-                    new PixelBroadcast(coord.x(), coord.y(), hexColor, request.authorUuid(), isEraser));
+                    new PixelBroadcast(coord.x(), coord.y(), hexColor, user.getAuthorId(), isEraser));
         }
         log.debug("Broadcast {} pixels to /topic/pixels", pixels.size());
     }
 
     /**
-     * Returns true if a user with the given UUID already exists in the database.
-     */
-    public boolean userExists(String uuid) {
-        return userRepository.existsById(uuid);
-    }
-
-    /**
-     * Registers a UUID-to-username mapping for pixel authorship.
-     */
-    public void registerUser(UserRegistrationRequest req) {
-        log.debug("Registering user: uuid={}", req.uuid());
-        if (req.username().equalsIgnoreCase("You")) {
-            throw new IllegalArgumentException("Username 'You' is reserved");
-        }
-        User user = new User();
-        user.setUuid(req.uuid());
-        user.setUsername(req.username());
-        userRepository.save(user);
-    }
-
-    /**
      * Returns pixel info for the most recently placed pixel at (x, y).
      *
-     * Includes the author's username, placement timestamp, author UUID,
+     * Includes the author's username, placement timestamp, public author ID,
      * and all current (x, y) positions by that author (for canvas highlight overlay).
      *
      * @return PixelInfoResponse or null if no pixel has been placed at (x, y)
@@ -160,17 +136,17 @@ public class PixelService {
         if (latest.getPaletteIndex() == 0) {
             return null;
         }
-        String username = userRepository.findById(latest.getAuthorUuid())
+        String username = userRepository.findByAuthorId(latest.getAuthorId())
                 .map(User::getUsername)
                 .orElse("unknown");
 
         List<PixelInfoResponse.AuthorPixelCoordinate> authorPixels =
-                pixelRepository.findCurrentPixelsByAuthor(latest.getAuthorUuid()).stream()
+                pixelRepository.findCurrentPixelsByAuthor(latest.getAuthorId()).stream()
                         .map(p -> new PixelInfoResponse.AuthorPixelCoordinate(p.getX(), p.getY()))
                         .toList();
 
         return new PixelInfoResponse(
-                latest.getAuthorUuid(),
+                latest.getAuthorId(),
                 username,
                 latest.getPlacedAt(),
                 authorPixels

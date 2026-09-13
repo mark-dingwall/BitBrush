@@ -8,7 +8,6 @@ import au.com.dingwall.mark.bitbrush.dto.PixelCoordinate;
 import au.com.dingwall.mark.bitbrush.dto.PixelInfoResponse;
 import au.com.dingwall.mark.bitbrush.dto.PixelPlacementRequest;
 import au.com.dingwall.mark.bitbrush.dto.StatsResponse;
-import au.com.dingwall.mark.bitbrush.dto.UserRegistrationRequest;
 import au.com.dingwall.mark.bitbrush.exception.InsufficientBalanceException;
 import au.com.dingwall.mark.bitbrush.exception.UserNotFoundException;
 import au.com.dingwall.mark.bitbrush.model.Pixel;
@@ -80,7 +79,7 @@ class PixelServiceTest {
     @Test
     void placePixels_validRequest_savesAndBroadcasts() {
         // Arrange: user exists and has sufficient balance
-        when(userRepository.existsById("uuid-1")).thenReturn(true);
+        when(userRepository.findById("uuid-1")).thenReturn(Optional.of(registeredUser("author_public")));
         when(bankingService.deductPoints("uuid-1", 1)).thenReturn(1);
 
         // Act: place a single pixel at (5, 10) with palette index 0 (black)
@@ -88,8 +87,50 @@ class PixelServiceTest {
                 List.of(new PixelCoordinate(5, 10)), 0, "uuid-1"));
 
         // Assert: pixel was persisted and broadcast fired
-        verify(pixelRepository).saveAll(anyList());
-        verify(messagingTemplate).convertAndSend(eq("/topic/pixels"), any(PixelBroadcast.class));
+        verify(pixelRepository).saveAll(pixelListCaptor.capture());
+        assertEquals("author_public", pixelListCaptor.getValue().getFirst().getAuthorId());
+        ArgumentCaptor<PixelBroadcast> broadcast = ArgumentCaptor.forClass(PixelBroadcast.class);
+        verify(messagingTemplate).convertAndSend(eq("/topic/pixels"), broadcast.capture());
+        assertEquals("author_public", broadcast.getValue().authorId());
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"author_public", "92481153-6989-44ac-b60e-b40cff7f8930"})
+    void pixelInfoResolvesPublicAndLegacyAuthorship(String authorId) {
+        Pixel pixel = new Pixel();
+        pixel.setX(5);
+        pixel.setY(10);
+        pixel.setPaletteIndex(1);
+        pixel.setAuthorId(authorId);
+        pixel.setPlacedAt(Instant.parse("2026-01-01T12:00:00Z"));
+        when(pixelRepository.findFirstByXAndYOrderByPlacedAtDesc(5, 10)).thenReturn(Optional.of(pixel));
+        when(userRepository.findByAuthorId(authorId)).thenReturn(Optional.of(registeredUser(authorId)));
+        au.com.dingwall.mark.bitbrush.dto.AuthorPixelProjection position = mock(au.com.dingwall.mark.bitbrush.dto.AuthorPixelProjection.class);
+        when(position.getX()).thenReturn(5);
+        when(position.getY()).thenReturn(10);
+        when(pixelRepository.findCurrentPixelsByAuthor(authorId)).thenReturn(List.of(position));
+        PixelInfoResponse result = pixelService.getPixelInfo(5, 10);
+        assertEquals("Artist", result.username());
+        assertEquals(authorId, result.authorId());
+        assertEquals(List.of(new PixelInfoResponse.AuthorPixelCoordinate(5, 10)), result.authorPixels());
+        verify(userRepository, never()).findById(any());
+    }
+
+    @Test
+    void publicAuthorIdCannotSpendOrPlacePixels() {
+        assertThrows(UserNotFoundException.class, () -> pixelService.placePixels(
+            new PixelPlacementRequest(List.of(new PixelCoordinate(1, 2)), 1, "author_public")));
+        verifyNoInteractions(bankingService, pixelRepository, messagingTemplate);
+    }
+
+    private User registeredUser(String authorId) {
+        User user = new User();
+        user.setUuid("uuid-1");
+        user.setUsername("Artist");
+        user.setAuthorId(authorId);
+        user.setPinHash("test-encoded-hash");
+        user.setPinBackfilled(false);
+        return user;
     }
 
     @Test
@@ -104,7 +145,7 @@ class PixelServiceTest {
     @Test
     void placePixels_unknownUser_throwsUserNotFound() {
         // Arrange: user does not exist in the repository
-        when(userRepository.existsById("unknown")).thenReturn(false);
+        when(userRepository.findById("unknown")).thenReturn(Optional.empty());
 
         // Act/Assert: UserNotFoundException thrown before any deduction or save
         assertThrows(UserNotFoundException.class, () ->
@@ -115,7 +156,7 @@ class PixelServiceTest {
     @Test
     void placePixels_zeroBalance_throwsInsufficientBalance() {
         // Arrange: user exists but has zero balance
-        when(userRepository.existsById("uuid-1")).thenReturn(true);
+        when(userRepository.findById("uuid-1")).thenReturn(Optional.of(registeredUser("author_public")));
         when(bankingService.deductPoints("uuid-1", 1)).thenReturn(0);
         when(bitbrushProperties.placement()).thenReturn(placement);
         when(placement.earnRateSeconds()).thenReturn(3);
@@ -132,7 +173,7 @@ class PixelServiceTest {
     @Test
     void placePixels_partialBalance_placesOnlyDeductedPixels() {
         // Drag-to-place partial placement: user requested 3 pixels but only had 2 points
-        when(userRepository.existsById("uuid-1")).thenReturn(true);
+        when(userRepository.findById("uuid-1")).thenReturn(Optional.of(registeredUser("author_public")));
         when(bankingService.deductPoints("uuid-1", 3)).thenReturn(2);
 
         // Act: request 3 pixels but only 2 will be placed
@@ -148,29 +189,13 @@ class PixelServiceTest {
     }
 
     @Test
-    void registerUser_validRequest_savesUser() {
-        // Act: register a new user
-        pixelService.registerUser(new UserRegistrationRequest("uuid-reg", "testuser"));
-
-        // Assert: user saved to repository
-        verify(userRepository).save(any(User.class));
-    }
-
-    @Test
-    void registerUser_reservedNameYou_throwsIllegalArgument() {
-        // "You" reserved for tooltip display -- case-insensitive check in service
-        assertThrows(IllegalArgumentException.class, () ->
-                pixelService.registerUser(new UserRegistrationRequest("uuid-you", "You")));
-    }
-
-    @Test
     void getPixelInfo_erasedPixel_returnsNull() {
         // Arrange: latest pixel at (5,5) has paletteIndex=0 (erased)
         Pixel eraserPixel = new Pixel();
         eraserPixel.setX(5);
         eraserPixel.setY(5);
         eraserPixel.setPaletteIndex(0);
-        eraserPixel.setAuthorUuid("uuid-eraser");
+        eraserPixel.setAuthorId("uuid-eraser");
         eraserPixel.setPlacedAt(Instant.now());
         when(pixelRepository.findFirstByXAndYOrderByPlacedAtDesc(5, 5))
                 .thenReturn(Optional.of(eraserPixel));
@@ -185,7 +210,7 @@ class PixelServiceTest {
     @Test
     void placePixels_eraserIndex_broadcastsErasedFlag() {
         // Arrange
-        when(userRepository.existsById("uuid-1")).thenReturn(true);
+        when(userRepository.findById("uuid-1")).thenReturn(Optional.of(registeredUser("author_public")));
         when(bankingService.deductPoints("uuid-1", 1)).thenReturn(1);
 
         // Act: place pixel with paletteIndex=0 (eraser)
@@ -203,7 +228,7 @@ class PixelServiceTest {
     @Test
     void placePixels_normalIndex_broadcastsNotErased() {
         // Arrange
-        when(userRepository.existsById("uuid-1")).thenReturn(true);
+        when(userRepository.findById("uuid-1")).thenReturn(Optional.of(registeredUser("author_public")));
         when(bankingService.deductPoints("uuid-1", 1)).thenReturn(1);
 
         // Act: place pixel with paletteIndex=1 (normal color)
@@ -243,7 +268,7 @@ class PixelServiceTest {
         pixel.setX(3);
         pixel.setY(7);
         pixel.setPaletteIndex(1);
-        pixel.setAuthorUuid("uuid-canvas");
+        pixel.setAuthorId("uuid-canvas");
         pixel.setPlacedAt(Instant.now());
         when(pixelRepository.findCurrentCanvasState()).thenReturn(List.of(pixel));
 

@@ -13,7 +13,7 @@ import java.util.List;
  * interface to the API response.
  */
 public record PixelInfoResponse(
-        String authorUuid,
+        String authorId,
         String username,
         Instant placedAt,
         List<AuthorPixelCoordinate> authorPixels

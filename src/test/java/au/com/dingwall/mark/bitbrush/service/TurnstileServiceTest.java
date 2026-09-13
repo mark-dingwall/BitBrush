@@ -78,11 +78,13 @@ class TurnstileServiceTest {
     }
 
     @Test
-    void verifyAndRemember_addsToVerifiedSet() {
+    void verificationRequiresAnExplicitPostSuccessMark() {
         stubVerifyResponse(new TurnstileService.TurnstileResponse(true, null));
 
         assertFalse(turnstileService.isVerified("uuid-1"));
-        assertTrue(turnstileService.verifyAndRemember("valid-token", "uuid-1"));
+        assertTrue(turnstileService.verify("valid-token"));
+        assertFalse(turnstileService.isVerified("uuid-1"));
+        turnstileService.markVerified("uuid-1");
         assertTrue(turnstileService.isVerified("uuid-1"));
 
         turnstileService.removeVerified("uuid-1");

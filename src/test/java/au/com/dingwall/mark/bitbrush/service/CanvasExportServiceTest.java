@@ -44,7 +44,7 @@ class CanvasExportServiceTest {
         p.setX(x);
         p.setY(y);
         p.setPaletteIndex(paletteIndex);
-        p.setAuthorUuid("test-uuid");
+        p.setAuthorId("test-uuid");
         p.setPlacedAt(Instant.now());
         return p;
     }

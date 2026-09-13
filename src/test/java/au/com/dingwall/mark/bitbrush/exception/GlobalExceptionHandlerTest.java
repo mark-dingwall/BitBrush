@@ -46,17 +46,17 @@ class GlobalExceptionHandlerTest {
     @MockitoBean
     private TurnstileService turnstileService;
 
-    private static final String TEST_UUID = "test-uuid-ex-handler";
+    private static final String TEST_UUID = "644c25a4-2f9c-4778-a9ca-1be4e903c206";
     private static final String TEST_USERNAME = "exhandler";
 
     @BeforeEach
     void registerTestUser() throws Exception {
-        when(turnstileService.verifyAndRemember(any(), any())).thenReturn(true);
+        when(turnstileService.verify(any())).thenReturn(true);
         when(turnstileService.isVerified(any())).thenReturn(true);
         mockMvc.perform(post("/api/users")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
-                        {"uuid": "%s", "username": "%s"}
+                        {"uuid": "%s", "username": "%s", "pin": "1234", "pinConfirmation": "1234"}
                         """.formatted(TEST_UUID, TEST_USERNAME)))
                 .andExpect(status().isCreated());
     }
@@ -109,7 +109,7 @@ class GlobalExceptionHandlerTest {
         mockMvc.perform(post("/api/users")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
-                        {"uuid": "uuid-dup-first", "username": "dupname"}
+                        {"uuid": "644c25a4-2f9c-4778-a9ca-1be4e903c207", "username": "dupname", "pin": "1234", "pinConfirmation": "1234"}
                         """))
                 .andExpect(status().isCreated());
 
@@ -117,7 +117,7 @@ class GlobalExceptionHandlerTest {
         mockMvc.perform(post("/api/users")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
-                        {"uuid": "uuid-dup-second", "username": "dupname"}
+                        {"uuid": "644c25a4-2f9c-4778-a9ca-1be4e903c208", "username": "dupname", "pin": "1234", "pinConfirmation": "1234"}
                         """))
                 .andExpect(status().isConflict());
     }

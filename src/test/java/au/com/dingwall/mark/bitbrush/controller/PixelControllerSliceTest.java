@@ -95,7 +95,7 @@ class PixelControllerSliceTest {
 
     @Test
     void postPixels_serviceThrowsUserNotFound_returns404() throws Exception {
-        doThrow(new UserNotFoundException("unknown"))
+        doThrow(new UserNotFoundException())
                 .when(pixelService).placePixels(any());
 
         mockMvc.perform(post("/api/pixels")

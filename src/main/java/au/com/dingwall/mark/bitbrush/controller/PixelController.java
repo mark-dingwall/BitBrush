@@ -50,10 +50,9 @@ public class PixelController {
 
     @GetMapping("/pixels/{x}/{y}/info")
     public ResponseEntity<PixelInfoResponse> getPixelInfo(@PathVariable int x, @PathVariable int y) {
-        log.debug("GET /api/pixels/{}/{}/info", x, y);
+        log.debug("GET pixel info");
         if (x < 0 || x > 249 || y < 0 || y > 249) {
-            throw new IllegalArgumentException(
-                    "Coordinates out of bounds: x=" + x + ", y=" + y + " (valid range: 0-249)");
+            throw new IllegalArgumentException("Coordinates out of bounds");
         }
         PixelInfoResponse info = pixelService.getPixelInfo(x, y);
         if (info == null) {

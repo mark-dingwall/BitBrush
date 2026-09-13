@@ -32,7 +32,7 @@ class PixelRepositoryTest {
         pixel.setX(10);
         pixel.setY(20);
         pixel.setPaletteIndex(5);
-        pixel.setAuthorUuid("uuid-1");
+        pixel.setAuthorId("uuid-1");
         pixel.setPlacedAt(Instant.parse("2026-01-01T12:00:00Z"));
 
         Pixel saved = pixelRepository.save(pixel);
@@ -41,7 +41,7 @@ class PixelRepositoryTest {
         assertThat(reloaded.getX()).isEqualTo(10);
         assertThat(reloaded.getY()).isEqualTo(20);
         assertThat(reloaded.getPaletteIndex()).isEqualTo(5);
-        assertThat(reloaded.getAuthorUuid()).isEqualTo("uuid-1");
+        assertThat(reloaded.getAuthorId()).isEqualTo("uuid-1");
         assertThat(reloaded.getPlacedAt()).isEqualTo(Instant.parse("2026-01-01T12:00:00Z"));
     }
 
@@ -54,14 +54,14 @@ class PixelRepositoryTest {
         p1.setX(5);
         p1.setY(5);
         p1.setPaletteIndex(1);
-        p1.setAuthorUuid("uuid-1");
+        p1.setAuthorId("uuid-1");
         p1.setPlacedAt(first);
 
         Pixel p2 = new Pixel();
         p2.setX(5);
         p2.setY(5);
         p2.setPaletteIndex(7);
-        p2.setAuthorUuid("uuid-2");
+        p2.setAuthorId("uuid-2");
         p2.setPlacedAt(second);
 
         pixelRepository.save(p1);
@@ -90,19 +90,20 @@ class PixelRepositoryTest {
         assertThat(result.get().getPaletteIndex()).isEqualTo(2);
     }
 
-    @Test
-    void findCurrentPixelsByAuthor_returnsOnlyCurrentPixels() {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"author_public", "92481153-6989-44ac-b60e-b40cff7f8930"})
+    void findCurrentPixelsByAuthor_returnsOnlyCurrentPixels(String publicAuthorId) {
         Instant first = Instant.parse("2026-01-01T12:00:00Z");
         Instant second = first.plusSeconds(1);
 
         // Author A places at (0,0)
-        pixelRepository.save(makePixel(0, 0, 1, "author-a", first));
+        pixelRepository.save(makePixel(0, 0, 1, publicAuthorId, first));
         // Author A places at (1,1)
-        pixelRepository.save(makePixel(1, 1, 1, "author-a", first));
+        pixelRepository.save(makePixel(1, 1, 1, publicAuthorId, first));
         // Author B overwrites (0,0)
         pixelRepository.save(makePixel(0, 0, 2, "author-b", second));
 
-        List<AuthorPixelProjection> authorAPixels = pixelRepository.findCurrentPixelsByAuthor("author-a");
+        List<AuthorPixelProjection> authorAPixels = pixelRepository.findCurrentPixelsByAuthor(publicAuthorId);
 
         // Author A only has (1,1) as current — (0,0) was overwritten by author B
         assertThat(authorAPixels).hasSize(1);
@@ -209,12 +210,12 @@ class PixelRepositoryTest {
         assertThat(distribution.get(0).getPixelCount()).isEqualTo(1);
     }
 
-    private Pixel makePixel(int x, int y, int paletteIndex, String authorUuid, Instant placedAt) {
+    private Pixel makePixel(int x, int y, int paletteIndex, String authorId, Instant placedAt) {
         Pixel pixel = new Pixel();
         pixel.setX(x);
         pixel.setY(y);
         pixel.setPaletteIndex(paletteIndex);
-        pixel.setAuthorUuid(authorUuid);
+        pixel.setAuthorId(authorId);
         pixel.setPlacedAt(placedAt);
         return pixel;
     }

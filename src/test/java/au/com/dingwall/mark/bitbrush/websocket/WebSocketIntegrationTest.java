@@ -187,7 +187,7 @@ class WebSocketIntegrationTest {
     // Must explicitly disconnect to avoid session leaks between tests.
     @BeforeEach
     void allowTurnstile() {
-        when(turnstileService.verifyAndRemember(any(), any())).thenReturn(true);
+        when(turnstileService.verify(any())).thenReturn(true);
         when(turnstileService.isVerified(any())).thenReturn(true);
         connectedEventCapture.clear();
     }
@@ -201,7 +201,7 @@ class WebSocketIntegrationTest {
         }
         openSessions.clear();
         // Clean up any manually registered bank entries from pixel broadcast test
-        bankingService.onUserDisconnect("ws-test-uuid-pixel");
+        bankingService.onUserDisconnect("644c25a4-2f9c-4778-a9ca-1be4e903c209");
         connectedEventCapture.clear();
     }
 
@@ -217,13 +217,13 @@ class WebSocketIntegrationTest {
     @Test
     void pixelBroadcastDeliveredToSubscriber() throws Exception {
         // Given: register a user so pixel placement is authorized
-        String userUuid = "ws-test-uuid-pixel";
+        String userUuid = "644c25a4-2f9c-4778-a9ca-1be4e903c209";
         String wsSession = "ws-test-session-pixel";
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         restTemplate.postForEntity("/api/users",
                 new HttpEntity<>("""
-                        {"uuid": "%s", "username": "wstester"}
+                        {"uuid": "%s", "username": "wstester", "pin": "1234", "pinConfirmation": "1234"}
                         """.formatted(userUuid), headers),
                 Void.class);
 

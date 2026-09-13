@@ -14,7 +14,7 @@ import java.time.Instant;
  * Append-only log of pixel placements on the shared canvas.
  * No unique constraint on (x, y) — each placement is a new row.
  *
- * Authorship is stored as authorUuid only; username is always looked up
+ * Authorship is stored as authorId only; username is always looked up
  * from the USERS table to avoid transitive dependency (3NF).
  */
 @Entity
@@ -34,8 +34,8 @@ public class Pixel {
     @Column(nullable = false)
     private int paletteIndex;
 
-    @Column(nullable = false)
-    private String authorUuid;
+    @Column(name = "author_id", nullable = false)
+    private String authorId;
 
     @Column(nullable = false)
     private Instant placedAt;
@@ -54,8 +54,8 @@ public class Pixel {
     public int getPaletteIndex() { return paletteIndex; }
     public void setPaletteIndex(int paletteIndex) { this.paletteIndex = paletteIndex; }
 
-    public String getAuthorUuid() { return authorUuid; }
-    public void setAuthorUuid(String authorUuid) { this.authorUuid = authorUuid; }
+    public String getAuthorId() { return authorId; }
+    public void setAuthorId(String authorId) { this.authorId = authorId; }
 
     public Instant getPlacedAt() { return placedAt; }
     public void setPlacedAt(Instant placedAt) { this.placedAt = placedAt; }

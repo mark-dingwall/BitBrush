@@ -47,7 +47,7 @@ class CanvasControllerTest {
         pixel.setX(3);
         pixel.setY(4);
         pixel.setPaletteIndex(1); // "#000033" — second palette entry (paletteIndex 0 is now eraser)
-        pixel.setAuthorUuid("uuid-canvas-test");
+        pixel.setAuthorId("uuid-canvas-test");
         pixel.setPlacedAt(Instant.now());
         pixelRepository.save(pixel);
 
@@ -67,7 +67,7 @@ class CanvasControllerTest {
         pixel.setX(10);
         pixel.setY(10);
         pixel.setPaletteIndex(5);
-        pixel.setAuthorUuid("uuid-png-test");
+        pixel.setAuthorId("uuid-png-test");
         pixel.setPlacedAt(Instant.now());
         pixelRepository.save(pixel);
 

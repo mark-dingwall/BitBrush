@@ -52,18 +52,18 @@ class PixelControllerTest {
     @MockitoBean
     private TurnstileService turnstileService;
 
-    private static final String TEST_UUID = "test-uuid-pixel-ctrl";
+    private static final String TEST_UUID = "644c25a4-2f9c-4778-a9ca-1be4e903c202";
     private static final String TEST_USERNAME = "pixeltester";
     private static final String TEST_SESSION = "test-session-ctrl";
 
     @BeforeEach
     void registerTestUser() throws Exception {
-        when(turnstileService.verifyAndRemember(any(), any())).thenReturn(true);
+        when(turnstileService.verify(any())).thenReturn(true);
         when(turnstileService.isVerified(any())).thenReturn(true);
         mockMvc.perform(post("/api/users")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
-                        {"uuid": "%s", "username": "%s"}
+                        {"uuid": "%s", "username": "%s", "pin": "1234", "pinConfirmation": "1234"}
                         """.formatted(TEST_UUID, TEST_USERNAME)))
                 .andExpect(status().isCreated());
         bankingService.onUserConnect(TEST_UUID, TEST_SESSION);
@@ -168,7 +168,7 @@ class PixelControllerTest {
         // When/Then: GET /api/pixels/5/7/info returns author info
         mockMvc.perform(get("/api/pixels/5/7/info"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.authorUuid").value(TEST_UUID))
+                .andExpect(jsonPath("$.authorId").value(userRepository.findById(TEST_UUID).orElseThrow().getAuthorId()))
                 .andExpect(jsonPath("$.username").value(TEST_USERNAME))
                 .andExpect(jsonPath("$.placedAt").isNotEmpty())
                 .andExpect(jsonPath("$.authorPixels").isArray())
@@ -188,12 +188,12 @@ class PixelControllerTest {
     @Test
     void getPixelInfo_afterErase_returns404() throws Exception {
         // Use isolated UUID to avoid depleting shared TEST_UUID balance
-        String eraserUuid = "test-uuid-eraser-info";
+        String eraserUuid = "644c25a4-2f9c-4778-a9ca-1be4e903c203";
         String eraserSession = "test-session-eraser-info";
         mockMvc.perform(post("/api/users")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
-                        {"uuid": "%s", "username": "erasertester1"}
+                        {"uuid": "%s", "username": "erasertester1", "pin": "1234", "pinConfirmation": "1234"}
                         """.formatted(eraserUuid)))
                 .andExpect(status().isCreated());
         bankingService.onUserConnect(eraserUuid, eraserSession);
@@ -238,12 +238,12 @@ class PixelControllerTest {
     @Test
     void getCanvas_erasedPixel_excluded() throws Exception {
         // Use isolated UUID to avoid depleting shared TEST_UUID balance
-        String eraserUuid = "test-uuid-eraser-canvas";
+        String eraserUuid = "644c25a4-2f9c-4778-a9ca-1be4e903c204";
         String eraserSession = "test-session-eraser-canvas";
         mockMvc.perform(post("/api/users")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
-                        {"uuid": "%s", "username": "erasertester2"}
+                        {"uuid": "%s", "username": "erasertester2", "pin": "1234", "pinConfirmation": "1234"}
                         """.formatted(eraserUuid)))
                 .andExpect(status().isCreated());
         bankingService.onUserConnect(eraserUuid, eraserSession);
@@ -286,14 +286,14 @@ class PixelControllerTest {
     void postPixelsReturns402WhenBalanceZero() throws Exception {
         // Use a fresh UUID isolated to this test so balance always starts at 5,
         // regardless of what other tests may have deducted from TEST_UUID.
-        String rate402Uuid = "test-uuid-402-isolated";
+        String rate402Uuid = "644c25a4-2f9c-4778-a9ca-1be4e903c205";
         String rate402Session = "test-session-402";
 
         // Register user and connect to banking
         mockMvc.perform(post("/api/users")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
-                        {"uuid": "%s", "username": "rate402tester"}
+                        {"uuid": "%s", "username": "rate402tester", "pin": "1234", "pinConfirmation": "1234"}
                         """.formatted(rate402Uuid)))
                 .andExpect(status().isCreated());
         bankingService.onUserConnect(rate402Uuid, rate402Session);
