@@ -383,7 +383,7 @@ class UserIdentityServiceTest {
     @Test
     void capacityCancellationPreservesAnotherPendingAccountAttemptAndIpHistory() {
         var properties = new au.com.dingwall.mark.bitbrush.config.PinProperties(
-            "test-pepper", 32, 1, 1, 16, 1, 1, java.time.Duration.ofMinutes(15), 2, 2, 10, 10);
+            "test-pepper", 32, 1, 1, 16, 1, 1, java.time.Duration.ofMinutes(15), 2, 2, 10, 10, "");
         RecoveryAttemptService realAttempts = new RecoveryAttemptService(properties, java.time.Clock.systemUTC());
         realAttempts.recordAccountAttempt("Artist"); // Another admitted request is still pending.
         realAttempts.recordIpAttempt(IP);

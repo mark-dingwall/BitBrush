@@ -71,7 +71,7 @@ class SensitiveDataLoggingTest {
             byte[] pepperBytes = new byte[32];
             new SecureRandom().nextBytes(pepperBytes);
             String pepper = Base64.getEncoder().encodeToString(pepperBytes);
-            PinProperties properties = new PinProperties(pepper, 32, 1, 1, 16, 1, 1, Duration.ofMinutes(15), 5, 20, 100, 100);
+            PinProperties properties = new PinProperties(pepper, 32, 1, 1, 16, 1, 1, Duration.ofMinutes(15), 5, 20, 100, 100, "");
             PinCredentialService credentials = new PinCredentialService(properties);
             UserRepository users = mock(UserRepository.class);
             PixelRepository pixels = mock(PixelRepository.class);

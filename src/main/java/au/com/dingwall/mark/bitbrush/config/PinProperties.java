@@ -22,5 +22,6 @@ public record PinProperties(
     @Min(1) int accountLimit,
     @Min(1) int ipLimit,
     @Min(1) int accountCapacity,
-    @Min(1) int ipCapacity) {
+    @Min(1) int ipCapacity,
+    String backfillExportPath) {
 }

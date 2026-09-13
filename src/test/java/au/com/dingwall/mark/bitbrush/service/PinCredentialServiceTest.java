@@ -20,7 +20,7 @@ class PinCredentialServiceTest {
 
     private final PinProperties properties = new PinProperties(
         "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", 32, 1, 1, 16, 1, 7,
-        Duration.ofMinutes(15), 5, 20, 10_000, 10_000);
+        Duration.ofMinutes(15), 5, 20, 10_000, 10_000, "");
 
     @Test
     void hashesSamePinWithDistinctSaltsAndVerifiesOnlyTheRightCaseAndPepper() {
@@ -30,7 +30,7 @@ class PinCredentialServiceTest {
         String second = service.hash(pin);
         PinCredentialService wrongPepper = new PinCredentialService(new PinProperties(
             "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=", 32, 1, 1, 16, 1, 7,
-            Duration.ofMinutes(15), 5, 20, 10_000, 10_000));
+            Duration.ofMinutes(15), 5, 20, 10_000, 10_000, ""));
 
         assertThat(first).isNotEqualTo(second);
         assertThat(service.verify(pin, first)).isTrue();

@@ -358,7 +358,7 @@ class RecoveryAttemptServiceTest {
 
     private static PinProperties properties(Duration window, int accounts, int ips, int accountCapacity, int ipCapacity) {
         return new PinProperties("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", 32, 1, 1, 16, 1, 1,
-            window, accounts, ips, accountCapacity, ipCapacity);
+            window, accounts, ips, accountCapacity, ipCapacity, "");
     }
 
     private static InetAddress ip(int lastByte) {

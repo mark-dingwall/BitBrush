@@ -29,7 +29,7 @@ class PinProductionPolicyTest {
     @Test
     void rejectsExcessiveConcurrencyInDocker() {
         PinProperties properties = new PinProperties("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
-            19_456, 2, 1, 32, 3, 1, Duration.ofMinutes(15), 5, 20, 10_000, 10_000);
+            19_456, 2, 1, 32, 3, 1, Duration.ofMinutes(15), 5, 20, 10_000, 10_000, "");
 
         MockEnvironment environment = activeProfile("docker");
 
@@ -40,7 +40,7 @@ class PinProductionPolicyTest {
     @Test
     void rejectsNonPositiveRecoveryWindowInEveryProfile() {
         PinProperties properties = new PinProperties("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
-            32, 1, 1, 16, 1, 1, Duration.ZERO, 5, 20, 10_000, 10_000);
+            32, 1, 1, 16, 1, 1, Duration.ZERO, 5, 20, 10_000, 10_000, "");
 
         MockEnvironment environment = activeProfile("test");
 
