@@ -29,7 +29,7 @@
 - Every response containing a private UUID has `Cache-Control: no-store`.
 - Existing UUID-shaped public author IDs remain public history only and must fail every bearer-credential path.
 - Turnstile verification state lasts for the process lifetime; disconnect never clears it.
-- Supported profiles keep `org.springframework.messaging.simp` and `org.springframework.web.socket.messaging` at INFO or higher; deliberately overriding those framework namespaces to DEBUG/TRACE is unsupported because Spring itself renders native headers and Principals there.
+- Supported profiles keep `org.springframework.messaging.simp`, `org.springframework.web.socket.messaging`, and Spring's fallback `org.springframework.web.SimpLogging` category at INFO or higher; deliberately overriding any of them to DEBUG/TRACE is unsupported because Spring itself renders native headers and Principals there.
 - Banking earns once per unique `SimpUserRegistry` principal, regardless of that principal's session count.
 - The widget remains standalone and dependency-free; the two clients may mirror small identity UI code.
 - Database/filesystem rollout is one cohesive feature because no intermediate production schema is safe for mixed old/new application writes.
@@ -177,7 +177,7 @@
 
 - [ ] **Step 1: Write failing deterministic throttle and concurrency tests**
 
-  Use `MutableClock` and barriers. For username and IP independently assert configured limits and window values, immediately below/at/after limits, exact rolling expiry, success clearing username only, exact case sensitivity, unknown username accounting, key independence, bounded-map fail-closed behavior with computed `Retry-After`, and cleanup racing with checks. Include a capacity-one case whose resident key has multiple timestamps and prove the reported delay reaches that key's final timestamp expiry. Add simultaneous first-key admission at capacity and prove no reserved-but-unpublished state, missing delay, or leaked slot is observable. Add deterministic races for an existing-key update during capacity-delay calculation and cleanup removing that key before its update; assert the reported delay, attempt count, and capacity bound remain correct. The default-limit concurrency assertion is:
+  Use `MutableClock` and barriers. For username and IP independently assert configured limits and window values, immediately below/at/after limits, exact rolling expiry, success clearing username only, exact case sensitivity, unknown username accounting, key independence, bounded-map fail-closed behavior with computed `Retry-After`, and cleanup racing with checks. Include a capacity-one case whose resident key has multiple timestamps and prove the reported delay reaches that key's final timestamp expiry. Add simultaneous first-key admission at capacity and prove no reserved-but-unpublished state, missing delay, or leaked slot is observable. Add deterministic races for an existing-key update during capacity-delay calculation and cleanup removing that key before its update; assert the reported delay, attempt count, and capacity bound remain correct. Use an advancing-on-read test clock to assert exactly one `instant()` call and coherent insertion/delay results for accepted, throttled, and capacity-rejected operations. The default-limit concurrency assertion is:
 
   ```java
   AtomicInteger accepted = new AtomicInteger();
@@ -391,7 +391,7 @@ Tasks 4–6 are one atomic implementation work package owned by one subagent bec
 
 - [ ] **Step 4: Add captured-log privacy tests and remove sensitive logging**
 
-  At DEBUG/TRACE exercise create, reconnect, recover, failed reconnect, pixel placement, and exception rendering. Seed unique marker values for private UUID, PIN, encoded hash, and pepper, then assert none occurs in captured output or ProblemDetail JSON. Use boolean/index-based assertions with constant diagnostics; never use an assertion form that includes the captured output or forbidden operand in failure output. Logs may contain counts and public author IDs only. Task 7 extends this same test across its STOMP and banking ownership after removing those components' credential-bearing logs.
+  At DEBUG/TRACE exercise create, reconnect, recover, failed reconnect, pixel placement, and exception rendering. Seed unique marker values for private UUID, PIN, encoded hash, and pepper, then assert none occurs in captured output or ProblemDetail JSON. Attach a non-propagating in-memory test appender, restore logging state in `finally`, and use boolean/index-based assertions with constant diagnostics; never use an assertion form that includes the captured output or forbidden operand in failure output. Logs may contain counts and public author IDs only. Task 7 extends this same test across its STOMP and banking ownership after removing those components' credential-bearing logs.
 
 - [ ] **Step 5: Run HTTP/privacy tests and commit**
 
@@ -435,7 +435,7 @@ Tasks 4–6 are one atomic implementation work package owned by one subagent bec
 
 - [ ] **Step 3: Add interceptor unit/integration cases for both connection commands**
 
-  Cover known canonical private UUID, missing, blank, malformed, public author ID, unknown UUID, and repository failure for both `CONNECT` and `STOMP`. Assert rejected cases receive an ERROR or transport close, no `SessionConnectEvent`/CONNECTED frame, and never call `markVerified`; accepted cases expose the expected Principal and call `markVerified` synchronously. Add valid and invalid single-WebSocket-message pipelines containing `CONNECT + SEND/SUBSCRIBE`, proving follow-on frames cannot outrun or bypass handshake authentication. Under the supported profile configuration, run application packages at TRACE while keeping `org.springframework.messaging.simp` and `org.springframework.web.socket.messaging` at INFO or higher, and assert the captured combined logs never contain the submitted UUID; retain an ERROR-level framework assertion for the invalid pipeline. Treat higher-precedence operator overrides that lower either Spring namespace below INFO as unsupported security configuration and document that boundary rather than adding runtime logging-policy machinery.
+  Cover known canonical private UUID, missing, blank, malformed, public author ID, unknown UUID, and repository failure for both `CONNECT` and `STOMP`. Assert rejected cases receive an ERROR or transport close, no `SessionConnectEvent`/CONNECTED frame, and never call `markVerified`; accepted cases expose the expected Principal and call `markVerified` synchronously. Add valid and invalid single-WebSocket-message pipelines containing `CONNECT + SEND/SUBSCRIBE`, proving follow-on frames cannot outrun or bypass handshake authentication. Under the supported profile configuration, run application packages at TRACE while keeping `org.springframework.messaging.simp`, `org.springframework.web.socket.messaging`, and `org.springframework.web.SimpLogging` at INFO or higher, and assert the captured combined logs never contain the submitted UUID; retain an ERROR-level framework assertion for the invalid pipeline. Treat higher-precedence operator overrides that lower any of those three categories below INFO as unsupported security configuration and document that boundary rather than adding runtime logging-policy machinery.
 
 - [ ] **Step 4: Implement synchronous STOMP authentication**
 
@@ -451,7 +451,7 @@ Tasks 4–6 are one atomic implementation work package owned by one subagent bec
 
 - [ ] **Step 7: Run WebSocket/banking tests and commit**
 
-  Replace `PixelControllerTest`'s manual `onUserConnect/onUserDisconnect` setup with `ensureBank`, remove obsolete session constants/cleanup, and keep its isolated bank cases explicit. Extend `SensitiveDataLoggingTest` with STOMP connect/disconnect and banking operations at application DEBUG/TRACE, remove private UUID log arguments from Task 7-owned components, and assert only session IDs/counts/public author IDs can appear. Configure both Spring STOMP namespaces above to remain at INFO or higher in every profile and assert those logger ceilings in the test; this is the supported logging boundary because Spring 6.2.16 itself renders native headers and Principals at DEBUG/TRACE.
+  Replace `PixelControllerTest`'s manual `onUserConnect/onUserDisconnect` setup with `ensureBank`, remove obsolete session constants/cleanup, and keep its isolated bank cases explicit. Extend `SensitiveDataLoggingTest` with STOMP connect/disconnect and banking operations at application DEBUG/TRACE, remove private UUID log arguments from Task 7-owned components, and assert only session IDs/counts/public author IDs can appear. Configure the two Spring STOMP namespaces and the `org.springframework.web.SimpLogging` fallback above to remain at INFO or higher in every profile and assert all three logger ceilings in the test; this is the supported logging boundary because Spring 6.2.16 itself renders native headers and Principals at DEBUG/TRACE.
 
   Run: `./gradlew test --tests '*BankingServiceTest' --tests '*TurnstileServiceTest' --tests '*PixelControllerTest' --tests '*WebSocketIntegrationTest' --tests '*SensitiveDataLoggingTest'`
 
@@ -754,7 +754,7 @@ Tasks 4–6 are one atomic implementation work package owned by one subagent bec
 
 - [ ] **Step 5: Update architecture and operator documentation**
 
-  Document three endpoints, local storage containing UUID/username only, public author IDs, process-local throttle assumption, the INFO-or-higher Spring STOMP logging ceiling, `PIN_PEPPER` generation/backup and loss consequences, Argon2 calibration values, `PIN_BACKFILL_EXPORT_PATH`, protected retrieval/deletion order, `BITBRUSH_E2E_UUID`, immediate deployment strategy, PostgreSQL backup, and roll-forward-only corrective rollback after V4. Update Docker/Fly configuration to require the pepper without committing one, and set and verify `[deploy] strategy = "immediate"` in `fly.toml` so rollout safety is enforced rather than left as prose.
+  Document three endpoints, local storage containing UUID/username only, public author IDs, process-local throttle assumption, all three INFO-or-higher Spring STOMP logging categories including `org.springframework.web.SimpLogging`, `PIN_PEPPER` generation/backup and loss consequences, Argon2 calibration values, `PIN_BACKFILL_EXPORT_PATH`, protected retrieval/deletion order, `BITBRUSH_E2E_UUID`, immediate deployment strategy, PostgreSQL backup, and roll-forward-only corrective rollback after V4. Update Docker/Fly configuration to require the pepper without committing one, and set and verify `[deploy] strategy = "immediate"` in `fly.toml` so rollout safety is enforced rather than left as prose.
 
 - [ ] **Step 6: Build the production container and run local browser checks**
 
