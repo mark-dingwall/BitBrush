@@ -1,24 +1,20 @@
 import { test, expect, Page } from '@playwright/test';
 
 const BITBRUSH_SERVER = 'https://bitbrush.fly.dev';
+const BITBRUSH_E2E_UUID = process.env.BITBRUSH_E2E_UUID;
+
+if (!BITBRUSH_E2E_UUID) {
+  throw new Error('BITBRUSH_E2E_UUID is required');
+}
 
 /** Pre-seed identity so the username overlay doesn't block interactions.
  *  Turnstile invisible mode doesn't work in headless Playwright. */
 async function seedIdentity(page: Page) {
   await page.goto('/', { waitUntil: 'load' });
-  const uuid = await page.evaluate(() => {
-    let uuid = localStorage.getItem('bitbrush_widget_uuid');
-    if (!uuid) {
-      uuid = crypto.randomUUID();
-      localStorage.setItem('bitbrush_widget_uuid', uuid);
-    }
-    localStorage.setItem('bitbrush_widget_username', 'PlaywrightBot');
-    return uuid;
-  });
-  // Register the user server-side (bypass Turnstile with Cloudflare test keys in dev)
-  // In prod, we just seed localStorage — the widget will re-register silently on connect,
-  // and even if it fails (403), the overlay won't show because username is in localStorage.
-  return uuid;
+  await page.evaluate((uuid) => {
+    localStorage.setItem('bitbrush_widget_uuid', uuid);
+    localStorage.removeItem('bitbrush_widget_username');
+  }, BITBRUSH_E2E_UUID);
 }
 
 /** Navigate to the BitBrush quadrant (top-left) from the intro page */
