@@ -14,12 +14,12 @@
 
 - A PIN is case-sensitive and must canonicalize to exactly four Unicode code points.
 - Canonicalization is NFC, then replaces every `Cc`, `Cf`, `Zs`, `Zl`, and `Zp` code point with U+0020; spaces remain significant and unpaired surrogates are rejected.
-- PIN inputs are never stored by either client and never appear in URLs, logs, responses, metrics, tracing attributes, or test output.
+- PIN inputs are never stored by either client and never appear in URLs, logs (including browser-console output), responses, metrics, tracing attributes, or test output.
 - Secret-absence tests use boolean/index checks with constant failure diagnostics so neither the forbidden operand nor captured output is printed when an assertion fails.
 - Credential input is HMAC-SHA-256 over `bitbrush-pin-v1` plus canonical UTF-8 using a server-wide pepper, then Argon2id with a unique salt.
 - `PIN_PEPPER` is Base64-encoded, decodes to at least 32 bytes, is mandatory in docker/prod, and has explicit non-production dev/test values.
 - Argon2id production defaults are 19,456 KiB memory, 2 iterations, parallelism 1, 32-byte output, and at most two concurrent operations; calibration may increase but never reduce these values.
-- Argon2 capacity acquisition is immediate; exhaustion returns `503 Service Unavailable` with `Retry-After: 1`.
+- Argon2 capacity acquisition is immediate; exhaustion returns `503 Service Unavailable` with `Retry-After: 1`. During recovery it cancels only that request's account reservation, preserving the username failure budget while retaining the IP request.
 - Recovery permits five failed attempts per exact username and twenty total requests per canonical source IP in rolling 15-minute windows.
 - The recovery maps are process-local and bounded to 10,000 live keys each; capacity exhaustion fails closed.
 - Identity POST bodies are capped at 4,096 bytes before MVC, Turnstile, or Argon2; raw PIN fields are capped at 256 UTF-16 code units before credential work.
@@ -173,11 +173,11 @@
 
 **Interfaces:**
 - Consumes: `PinProperties.recoveryWindow/accountLimit/ipLimit/accountCapacity/ipCapacity` and injected `Clock`.
-- Produces: `recordIpAttempt(InetAddress)`, `recordAccountAttempt(String)`, and `clearAccount(String)`.
+- Produces: `recordIpAttempt(InetAddress)`, `AccountAttemptReservation recordAccountAttempt(String)`, `cancelAccountAttempt(AccountAttemptReservation)`, and `clearAccount(String)`. Define `public record AccountAttemptReservation(String username, long sequence)` inside `RecoveryAttemptService`.
 
 - [ ] **Step 1: Write failing deterministic throttle and concurrency tests**
 
-  Use `MutableClock` and barriers. For username and IP independently assert configured limits and window values, immediately below/at/after limits, exact rolling expiry, success clearing username only, exact case sensitivity, unknown username accounting, key independence, bounded-map fail-closed behavior with computed `Retry-After`, and cleanup racing with checks. Include a capacity-one case whose resident key has multiple timestamps and prove the reported delay reaches that key's final timestamp expiry. Add simultaneous first-key admission at capacity and prove no reserved-but-unpublished state, missing delay, or leaked slot is observable. Add deterministic races for an existing-key update during capacity-delay calculation and cleanup removing that key before its update; assert the reported delay, attempt count, and capacity bound remain correct. Use an advancing-on-read test clock to assert exactly one `instant()` call and coherent insertion/delay results for accepted, throttled, and capacity-rejected operations. The default-limit concurrency assertion is:
+  Use `MutableClock` and barriers. For username and IP independently assert configured limits and window values, immediately below/at/after limits, exact rolling expiry, success clearing username only, exact case sensitivity, unknown username accounting, key independence, bounded-map fail-closed behavior with computed `Retry-After`, and cleanup racing with checks. Assert cancelling an account reservation removes only its unique attempt, leaves concurrent reservations intact, is an idempotent no-op after clear/expiry, and removes the account-map key when its final attempt is cancelled so capacity is immediately reusable. Include a capacity-one case whose resident key has multiple timestamps and prove the reported delay reaches that key's final timestamp expiry. Add simultaneous first-key admission at capacity and prove no reserved-but-unpublished state, missing delay, or leaked slot is observable. Add deterministic races for an existing-key update during capacity-delay calculation and cleanup removing that key before its update; assert the reported delay, attempt count, and capacity bound remain correct. Use an advancing-on-read test clock to assert exactly one `instant()` call and coherent insertion/delay results for accepted, throttled, capacity-rejected, and cancelled operations. The default-limit concurrency assertion is:
 
   ```java
   AtomicInteger accepted = new AtomicInteger();
@@ -194,7 +194,7 @@
 
 - [ ] **Step 2: Implement atomic rolling windows**
 
-  Use one coordination lock per map around every admission, existing-key update, clear, expired-key removal, and capacity-delay snapshot. Acquire the applicable lock, then sample exactly one `Instant now = clock.instant()` for pruning, insertion, and delay calculation in that operation. Store immutable timestamp deques as map values, prune timestamps `<= now.minus(recoveryWindow)`, reject before adding when the configured applicable limit is already present, and compute ceiling seconds for `Retry-After`. Only the locked admission path may transform absent to present, and it publishes the first timestamp before releasing the lock; there is no separate reserved-but-unpublished state or remove/recreate path outside the boundary. Ordinary throttle delay is `ceil(oldest retained timestamp + recoveryWindow - now)`; capacity delay is `ceil(min(newest timestamp per live key + recoveryWindow) - now)` because a capacity slot is freed only when an entire key expires. Thus every recovery `429` has an applicable remaining delay without disclosing the dimension. Expose package-private `cleanupExpired()` for deterministic tests and scheduled opportunistic cleanup.
+  Use one coordination lock per map around every admission, existing-key update, account-reservation cancellation, clear, expired-key removal, and capacity-delay snapshot. Acquire the applicable lock, then sample exactly one `Instant now = clock.instant()` for pruning, insertion, and delay calculation in that operation. Store immutable timestamp deques for IP values and immutable `(sequence, timestamp)` entry deques for account values; allocate each account attempt a unique monotonic sequence and return its username/sequence as `AccountAttemptReservation`. Cancellation removes only the matching entry under the account lock and removes the key if its deque becomes empty; a reservation already cleared or expired is an idempotent no-op. Prune timestamps `<= now.minus(recoveryWindow)`, reject before adding when the configured applicable limit is already present, and compute ceiling seconds for `Retry-After`. Only the locked admission path may transform absent to present, and it publishes the first entry before releasing the lock; there is no separate reserved-but-unpublished state or remove/recreate path outside the boundary. Ordinary throttle delay is `ceil(oldest retained timestamp + recoveryWindow - now)`; capacity delay is `ceil(min(newest timestamp per live key + recoveryWindow) - now)` because a capacity slot is freed only when an entire key expires. Thus every recovery `429` has an applicable remaining delay without disclosing the dimension. Expose package-private `cleanupExpired()` for deterministic tests and scheduled opportunistic cleanup.
 
 - [ ] **Step 3: Run focused tests and commit**
 
@@ -329,7 +329,7 @@ Tasks 4–6 are one atomic implementation work package owned by one subagent bec
 
 - [ ] **Step 1: Define validated DTOs, canonical UUID validation, and failing orchestration tests**
 
-  Add a field annotation whose validator delegates to `public static boolean CanonicalUuidValidator.isCanonical(String value)`, implemented with `UUID.fromString(value).toString().equals(value)`; null/blank remains the DTO's `@NotBlank` responsibility. `UserCreateRequest` has canonical UUID, existing username constraints, and `@Size(max=256)` PIN fields; reconnect has canonical UUID; recovery has existing username constraints and `@Size(max=256)` PIN. Creation tests assert `canonicalize/compare → verify Turnstile → uniqueness prechecks → hash → transaction commit → markVerified`. Recovery tests assert `canonicalize → IP record → verify Turnstile → account record → lookup → real/dummy verify → clear account on success → markVerified`. Every failure before successful commit/credential verification omits `markVerified`.
+  Add a field annotation whose validator delegates to `public static boolean CanonicalUuidValidator.isCanonical(String value)`, implemented with `UUID.fromString(value).toString().equals(value)`; null/blank remains the DTO's `@NotBlank` responsibility. `UserCreateRequest` has canonical UUID, existing username constraints, and `@Size(max=256)` PIN fields; reconnect has canonical UUID; recovery has existing username constraints and `@Size(max=256)` PIN. Creation tests assert `canonicalize/compare → verify Turnstile → uniqueness prechecks → hash → transaction commit → markVerified`. Recovery tests assert `canonicalize → IP record → verify Turnstile → account reservation → lookup → real/dummy verify → clear account on success → markVerified`; `PinCapacityException` instead cancels only its reservation before propagating. Every failure before successful commit/credential verification omits `markVerified`.
 
 - [ ] **Step 2: Add creation success, collision, and transaction-failure tests**
 
@@ -341,11 +341,11 @@ Tasks 4–6 are one atomic implementation work package owned by one subagent bec
 
 - [ ] **Step 4: Add reconnect and recovery tests**
 
-  Assert reconnect returns authoritative username without mutation and marks only a found canonical private UUID. For recovery assert IP accounting precedes Turnstile; account accounting follows successful Turnstile; unknown username calls dummy Argon2; wrong and unknown credentials throw the same exception; success clears only the account counter, preserves IP history, returns the private UUID, and marks it only after verification.
+  Assert reconnect returns authoritative username without mutation and marks only a found canonical private UUID. For recovery assert IP accounting precedes Turnstile; account accounting follows successful Turnstile; unknown username calls dummy Argon2; wrong and unknown credentials throw the same exception and retain their reservations; success clears only the account counter, preserves IP history, returns the private UUID, and marks it only after verification. Have the credential-service mock throw `PinCapacityException` for five recovery calls and succeed with the correct PIN on the sixth; return a distinct reservation from each account admission and assert the first five are individually cancelled, the sixth reaches verification and `clearAccount`, and all six call `recordIpAttempt`. Separately assert a capacity failure cancels only its own reservation when another account attempt exists concurrently.
 
 - [ ] **Step 5: Implement reconnect and recover**
 
-  Canonicalize PIN before expensive work. Use exact-case `findByUsername`. Run real or dummy verification through `PinCredentialService`; never include username, UUID, PIN, or hash in exception text. Retain existing `TurnstileService.verify` and `markVerified`; remove `verifyAndRemember` only after all callers have migrated.
+  Canonicalize PIN before expensive work. Use exact-case `findByUsername`. Run real or dummy verification through `PinCredentialService`; catch only `PinCapacityException`, cancel that request's `AccountAttemptReservation`, and rethrow it so the controller retains the existing `503` response. Wrong and unknown credentials leave their reservations recorded; successful verification uses `clearAccount`. Never include username, UUID, PIN, or hash in exception text. Retain existing `TurnstileService.verify` and `markVerified`; remove `verifyAndRemember` only after all callers have migrated.
 
 - [ ] **Step 6: Run focused service tests**
 
@@ -611,11 +611,11 @@ Tasks 4–6 are one atomic implementation work package owned by one subagent bec
 
 - [ ] **Step 1: Write failing full-page browser tests**
 
-  Cover create/recover switching, opaque `A😀b!` submission, server confirmation error rendering, recovery failure clearing PIN, success storing exactly UUID/username, UUID-only reconnect, stale UUID 404 clearing both, username-only cleanup, Turnstile refresh, public `authorId` cache invalidation, and absence of PIN in storage. Delay identity responses and assert no STOMP construction/activation until resolution; afterward assert the authoritative UUID CONNECT header.
+  Cover create/recover switching, opaque `A😀b!` submission, server confirmation error rendering, recovery failure clearing PIN, success storing exactly UUID/username, UUID-only reconnect, stale UUID 404 clearing both, username-only cleanup, Turnstile refresh, public `authorId` cache invalidation, and absence of PIN in storage. Delay identity responses and assert no STOMP construction/activation until resolution; afterward assert the authoritative UUID CONNECT header. Attach a console listener before identity resolution, invoke any `debug` callback captured in the fake STOMP constructor options with a synthetic CONNECT frame containing the marker UUID, and assert boolean absence of the UUID and PIN markers from all console text using constant failure diagnostics that cannot print the captured output or secret operands.
 
 - [ ] **Step 2: Define modal markup and implement identity resolution**
 
-  Add username, password-masked PIN, confirm PIN, primary CTA, mode toggle, and error region. Use `autocomplete="new-password"` for create PINs and `autocomplete="current-password"` for recovery; do not add PIN `maxlength`. Replace eager UUID creation with:
+  Add username, password-masked PIN, confirm PIN, primary CTA, mode toggle, and error region. Use `autocomplete="new-password"` for create PINs and `autocomplete="current-password"` for recovery; do not add PIN `maxlength`. Delete the existing STOMP `debug` callback that forwards raw frames and CONNECT headers to `console.log`; do not replace it with credential-bearing browser logging. Replace eager UUID creation with:
 
   ```javascript
   function persistIdentity(identity) {
@@ -742,7 +742,9 @@ Tasks 4–6 are one atomic implementation work package owned by one subagent bec
 
   Add an opt-in test enabled by `PIN_CALIBRATION=true`. It constructs the production `19456/2/1/32` codec with a generated test pepper, warms it once, measures ten sequential hashes/verifications, then starts two simultaneous hashes behind a barrier. Assert both complete, hashes verify, and peak overlap is two. Run the test in a Gradle container constrained to 512 MiB; write timings only to `build/reports/pin-calibration.txt`, never PIN/keyed material/hash/pepper:
 
-  `docker run --rm --memory=512m -e PIN_CALIBRATION=true -v /home/mark/kramtime/BitBrush/.worktrees/username-pin-recovery:/workspace -w /workspace gradle:8.14.4-jdk21 ./gradlew test --tests '*PinCredentialCalibrationTest' --no-daemon`
+  From the repository checkout root, run:
+
+  `docker run --rm --memory=512m -e PIN_CALIBRATION=true -v "$(pwd):/workspace" -w /workspace gradle:8.14.4-jdk21 ./gradlew test --tests '*PinCredentialCalibrationTest' --no-daemon`
 
   Record the measured median and maximum in the deployment documentation. Increase memory/iterations only if the 512 MiB concurrent run remains healthy and latency stays operationally acceptable; never reduce the global minima.
 

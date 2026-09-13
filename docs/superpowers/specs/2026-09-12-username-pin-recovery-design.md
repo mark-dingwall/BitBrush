@@ -248,7 +248,7 @@ Default limits are configurable but secure by default:
 
 The IP check occurs before calling Turnstile. Account-specific state is created only after a valid Turnstile challenge, limiting attacker-driven map growth from arbitrary unauthenticated usernames. The account map is also size-bounded and entries expire; when capacity cannot be safely allocated, recovery fails closed.
 
-Unknown and existing usernames consume equivalent account attempts after Turnstile. A successful recovery clears that username's failure state; it does not erase the source IP's request history. Every `429` response reports the applicable remaining delay through `Retry-After` without revealing which limit fired.
+Unknown and existing usernames reserve equivalent account attempts after Turnstile and before credential verification, so concurrent requests cannot exceed the account limit. A wrong or unknown credential retains its reservation as failure state. If global Argon2 capacity cannot be acquired and recovery returns `503`, only that request's reservation is cancelled atomically; the request remains in the source IP's request history. A successful recovery clears that username's failure state; it does not erase the source IP's request history. Every `429` response reports the applicable remaining delay through `Retry-After` without revealing which limit fired.
 
 The counters are intentionally instance-local, matching BitBrush's current single-instance deployment and existing in-memory banking/verification architecture. Horizontal scaling requires shared throttling before adding instances.
 
@@ -289,7 +289,7 @@ New domain exceptions are handled centrally as RFC 7807 problems, following exis
 - Unknown reconnect UUID: existing `404 User Not Found` response.
 - Invalid request or canonical PIN: `400 Bad Request`.
 
-Every identity response containing a private UUID uses `Cache-Control: no-store`. Raw private UUIDs are credentials and never appear in application logs, exception messages, RFC 7807 details, metrics labels, or tracing attributes; existing controller, WebSocket, banking, pixel-service, and `UserNotFoundException` logging is removed or changed to non-secret session IDs, counts, or public author IDs. PINs and hashes are likewise never logged. Username logging is limited to what is operationally necessary, and failures do not distinguish account existence. The temporary post-migration export is the only plaintext-at-rest exception, is explicitly requested, is reproducible, has restrictive permissions, and is operator-deleted after retrieval.
+Every identity response containing a private UUID uses `Cache-Control: no-store`. Raw private UUIDs are credentials and never appear in application logs, browser-console output, exception messages, RFC 7807 details, metrics labels, or tracing attributes; existing controller, WebSocket, banking, pixel-service, `UserNotFoundException`, and browser STOMP logging is removed or changed to non-secret session IDs, counts, or public author IDs. PINs and hashes are likewise never logged. Username logging is limited to what is operationally necessary, and failures do not distinguish account existence. The temporary post-migration export is the only plaintext-at-rest exception, is explicitly requested, is reproducible, has restrictive permissions, and is operator-deleted after retrieval.
 
 ## Testing strategy
 
@@ -319,7 +319,7 @@ Parameterized tests cover:
 
 ### Throttling unit and concurrency tests
 
-With an injected fake clock, tests cover both limits immediately below, at, and after their boundaries; rolling-window expiry; successful account reset; unknown-account accounting; IP canonicalization; map-capacity fail-closed behavior; and independence between usernames/IPs.
+With an injected fake clock, tests cover both limits immediately below, at, and after their boundaries; rolling-window expiry; successful account reset; cancellation of only the requesting account reservation after Argon2 capacity failure; unknown-account accounting; IP canonicalization; map-capacity fail-closed behavior; and independence between usernames/IPs.
 
 Concurrent tests release many workers through a barrier and prove that atomic updates never permit more successful checks than configured. Cleanup is exercised concurrently with checks to catch unsafe iteration or lost updates.
 
@@ -338,6 +338,7 @@ Credential-concurrency tests prove that no more than the configured number of re
 - Unknown reconnect UUID.
 - Recovery returns the associated private UUID and resets only the appropriate account counter.
 - Incorrect PIN, unknown username, and dummy-hash execution.
+- Repeated Argon2-capacity failures preserve the account failure budget while continuing to consume the source IP request budget.
 - Turnstile/credential failure never marks a UUID verified.
 - Security steps occur in the documented order within the single service-owned workflow.
 - Pixel placement translates a private UUID to its public author ID; public responses never contain the private UUID.
@@ -397,7 +398,7 @@ Because the static clients intentionally have no application build step, verific
 
 - JavaScript syntax checks.
 - A separate local Playwright configuration that serves the static resources, substitutes deterministic Turnstile/API boundaries, and tests the full-page client and standalone widget before deployment.
-- Automated browser coverage for create/recover mode switching, opaque Unicode field submission, server-side confirmation/validation error rendering, identity-before-STOMP ordering, stale UUID handling, and the exact local-storage keys and values retained after success.
+- Automated browser coverage for create/recover mode switching, opaque Unicode field submission, server-side confirmation/validation error rendering, identity-before-STOMP ordering, stale UUID handling, the exact local-storage keys and values retained after success, and absence of PIN/private-UUID markers from browser-console output when the STOMP debug hook is exercised.
 - Canvas-response tests assert the clients use public `authorId` for cache invalidation and never receive or render the private UUID.
 - Local browser smoke tests for create, mode switching, confirmation mismatch, Unicode PIN feedback, recovery, stale UUID handling, storage contents, Turnstile refresh, and both full-page and widget clients.
 - Production Playwright setup reads a provisioned `BITBRUSH_E2E_UUID` secret, stores only that UUID, and lets `/api/users/reconnect` supply the authoritative username. It fails fast when the secret is absent and never embeds a PIN or reusable UUID in source control.
