@@ -10,8 +10,11 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.MediaType;
+import org.springframework.http.server.PathContainer;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
+import org.springframework.web.util.pattern.PathPattern;
+import org.springframework.web.util.pattern.PathPatternParser;
 
 import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
@@ -20,7 +23,7 @@ import java.io.InputStreamReader;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
-import java.util.Set;
+import java.util.List;
 
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE)
@@ -28,8 +31,10 @@ public class IdentityRequestSizeFilter extends OncePerRequestFilter {
 
     private static final int MAX_BODY_BYTES = 4_096;
     private static final int BUFFER_BYTES = MAX_BODY_BYTES + 1;
-    private static final Set<String> IDENTITY_PATHS = Set.of(
-        "/api/users", "/api/users/reconnect", "/api/users/recover"
+    private static final List<PathPattern> IDENTITY_PATHS = List.of(
+        PathPatternParser.defaultInstance.parse("/api/users"),
+        PathPatternParser.defaultInstance.parse("/api/users/reconnect"),
+        PathPatternParser.defaultInstance.parse("/api/users/recover")
     );
 
     @Override
@@ -53,7 +58,11 @@ public class IdentityRequestSizeFilter extends OncePerRequestFilter {
     }
 
     private boolean isIdentityPost(HttpServletRequest request) {
-        return "POST".equals(request.getMethod()) && IDENTITY_PATHS.contains(request.getRequestURI());
+        if (!"POST".equals(request.getMethod())) {
+            return false;
+        }
+        PathContainer path = PathContainer.parsePath(request.getRequestURI());
+        return IDENTITY_PATHS.stream().anyMatch(pattern -> pattern.matches(path));
     }
 
     private byte[] readBoundedBody(HttpServletRequest request) throws IOException {
