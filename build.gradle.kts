@@ -39,6 +39,9 @@ dependencies {
 	implementation("org.flywaydb:flyway-database-postgresql")
 	annotationProcessor("org.springframework.boot:spring-boot-configuration-processor")
 	testImplementation("org.springframework.boot:spring-boot-starter-test")
+	testImplementation(platform("org.testcontainers:testcontainers-bom:1.21.4"))
+	testImplementation("org.testcontainers:junit-jupiter")
+	testImplementation("org.testcontainers:postgresql")
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
@@ -48,7 +51,24 @@ tasks.named<org.springframework.boot.gradle.tasks.run.BootRun>("bootRun") {
 
 tasks.withType<Test> {
 	useJUnitPlatform()
+}
+
+tasks.named<Test>("test") {
+	exclude("**/LegacyIdentityMigrationTest*.class")
 	finalizedBy(tasks.jacocoTestReport)
+}
+
+val migrationTest by tasks.registering(Test::class) {
+	description = "Verifies legacy identity migrations against PostgreSQL"
+	group = "verification"
+	dependsOn(tasks.testClasses)
+	testClassesDirs = sourceSets.test.get().output.classesDirs
+	classpath = sourceSets.test.get().runtimeClasspath
+	filter {
+		includeTestsMatching("*LegacyIdentityMigrationTest")
+		isFailOnNoMatchingTests = true
+	}
+	useJUnitPlatform()
 }
 
 tasks.jacocoTestReport {
