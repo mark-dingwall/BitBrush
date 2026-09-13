@@ -9,6 +9,10 @@ group = "au.com.dingwall.mark.bitbrush"
 version = "0.1.0"
 description = "Collaborative pixel art canvas"
 
+if (providers.environmentVariable("PIN_CALIBRATION").orNull == "true") {
+	gradle.startParameter.maxWorkerCount = 1
+}
+
 java {
 	toolchain {
 		languageVersion = JavaLanguageVersion.of(21)
@@ -56,6 +60,11 @@ tasks.withType<Test> {
 tasks.named<Test>("test") {
 	exclude("**/LegacyIdentityMigrationTest*.class")
 	finalizedBy(tasks.jacocoTestReport)
+	if (providers.environmentVariable("PIN_CALIBRATION").orNull == "true") {
+		maxHeapSize = "128m"
+		maxParallelForks = 1
+		jvmArgs("-XX:+UseSerialGC")
+	}
 }
 
 val migrationTest by tasks.registering(Test::class) {

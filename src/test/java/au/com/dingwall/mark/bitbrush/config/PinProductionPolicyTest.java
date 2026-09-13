@@ -1,6 +1,9 @@
 package au.com.dingwall.mark.bitbrush.config;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.mock.env.MockEnvironment;
 
 import java.time.Duration;
@@ -37,15 +40,37 @@ class PinProductionPolicyTest {
             environment).validate());
     }
 
-    @Test
-    void rejectsNonPositiveRecoveryWindowInEveryProfile() {
+    @ParameterizedTest
+    @CsvSource({"19455,2,1,32,2", "19456,1,1,32,2", "19456,2,0,32,2", "19456,2,1,31,2", "19456,2,1,32,3"})
+    void rejectsEachIndependentProductionPolicyViolation(int memory, int iterations, int parallelism, int hashLength, int concurrency) {
+        // Catches removal of any single work-factor or concurrency guard hidden by short-circuiting.
         PinProperties properties = new PinProperties("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
-            32, 1, 1, 16, 1, 1, Duration.ZERO, 5, 20, 10_000, 10_000, "");
+            memory, iterations, parallelism, hashLength, concurrency, 1, Duration.ofMinutes(15),
+            5, 20, 10_000, 10_000, "");
+        for (String profile : new String[] {"prod", "docker"}) {
+            assertThatIllegalArgumentException().isThrownBy(() -> new PinProductionPolicy(properties,
+                activeProfile(profile)).validate());
+        }
+    }
 
-        MockEnvironment environment = activeProfile("test");
+    @ParameterizedTest
+    @ValueSource(strings = {"prod", "docker"})
+    void acceptsTheCalibratedProductionBoundary(String profile) {
+        PinProperties properties = new PinProperties("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+            19_456, 2, 1, 32, 2, 1, Duration.ofMinutes(15), 5, 20, 10_000, 10_000, "");
+        assertThatCode(() -> new PinProductionPolicy(properties, activeProfile(profile)).validate())
+            .doesNotThrowAnyException();
+    }
 
-        assertThatIllegalArgumentException().isThrownBy(() -> new PinProductionPolicy(properties,
-            environment).validate());
+    @ParameterizedTest
+    @ValueSource(longs = {0, -1})
+    void rejectsNonPositiveRecoveryWindowInEveryProfile(long seconds) {
+        PinProperties properties = new PinProperties("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+            19_456, 2, 1, 32, 2, 1, Duration.ofSeconds(seconds), 5, 20, 10_000, 10_000, "");
+        for (String profile : new String[] {"test", "dev", "prod", "docker"}) {
+            assertThatIllegalArgumentException().isThrownBy(() -> new PinProductionPolicy(properties,
+                activeProfile(profile)).validate());
+        }
     }
 
     private MockEnvironment activeProfile(String profile) {

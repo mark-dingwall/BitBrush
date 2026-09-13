@@ -30,9 +30,9 @@ class StompAuthenticationInterceptorTest {
         when(users.existsById(UUID)).thenReturn(true);
         StompHeaderAccessor headers = headers(command, UUID);
         Message<byte[]> message = message(headers);
-        assertSame(message, interceptor().preSend(message, null));
+        assertTrue(message == interceptor().preSend(message, null), "Authenticated frame was replaced");
         assertNotNull(headers.getUser());
-        assertEquals(UUID, headers.getUser().getName());
+        assertTrue(UUID.equals(headers.getUser().getName()), "Private principal identity mismatch");
         verify(turnstile).markVerified(UUID);
     }
 

@@ -307,6 +307,31 @@ class SecureExportPublisherTest {
         assertEquals(List.of(), names());
     }
 
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void refusesPublicationWhenPrivateEntriesChangeAfterWriting(boolean changeDirectory) throws Exception {
+        // Catches removing either final filesystem-identity check before public-name publication.
+        try (MockedStatic<FileChannel> channels = mockStatic(FileChannel.class, CALLS_REAL_METHODS)) {
+            channels.when(() -> FileChannel.open(any(Path.class), anySet(), any(FileAttribute[].class)))
+                .thenAnswer(call -> {
+                    FileChannel observed = spy((FileChannel) call.callRealMethod());
+                    Path opened = call.getArgument(0);
+                    if (!opened.equals(directory)) {
+                        doAnswer(force -> {
+                            Object result = force.callRealMethod();
+                            Files.setPosixFilePermissions(changeDirectory ? directory : opened,
+                                PosixFilePermissions.fromString(changeDirectory ? "rwxr-x---" : "rw-r-----"));
+                            return result;
+                        }).when(observed).force(true);
+                    }
+                    return observed;
+                });
+            assertThrows(IOException.class, () -> publisher.publish(target, CONTENT));
+        }
+        assertFalse(Files.exists(target), "Changed private entries were published");
+        assertEquals(List.of(), names(), "Invocation temporary was not cleaned");
+    }
+
     @Test
     void failedPublicationPreservesAReplacementAtItsTemporaryName() throws Exception {
         AtomicReference<Path> replacement = new AtomicReference<>();

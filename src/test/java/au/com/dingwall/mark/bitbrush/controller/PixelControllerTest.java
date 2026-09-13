@@ -17,6 +17,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static au.com.dingwall.mark.bitbrush.UserTestFixtures.persist;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -28,12 +29,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /**
  * Integration tests for POST /api/pixels (PIXL-01, PIXL-05, CANV-02, IDEN-02, ARCH-01).
  *
- * Not using @Transactional at class level — @BeforeEach registers a user via HTTP
- * (a separate transaction) that must be visible to subsequent pixel placement requests.
+ * Not using @Transactional at class level — complete user fixtures are committed
+ * separately and must be visible to subsequent pixel placement requests.
  * Cleanup is handled via @AfterEach.
  */
 @SpringBootTest
-@AutoConfigureMockMvc
+@AutoConfigureMockMvc(print = org.springframework.boot.test.autoconfigure.web.servlet.MockMvcPrint.NONE)
 @ActiveProfiles("test")
 class PixelControllerTest {
 
@@ -56,16 +57,11 @@ class PixelControllerTest {
     private static final String TEST_USERNAME = "pixeltester";
 
     @BeforeEach
-    void registerTestUser() throws Exception {
+    void registerTestUser() {
         testUuid = java.util.UUID.randomUUID().toString();
         when(turnstileService.verify(any())).thenReturn(true);
         when(turnstileService.isVerified(any())).thenReturn(true);
-        mockMvc.perform(post("/api/users")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("""
-                        {"uuid": "%s", "username": "%s", "pin": "1234", "pinConfirmation": "1234"}
-                        """.formatted(testUuid, TEST_USERNAME)))
-                .andExpect(status().isCreated());
+        persist(userRepository, testUuid, TEST_USERNAME);
         bankingService.ensureBank(testUuid);
     }
 
@@ -188,12 +184,7 @@ class PixelControllerTest {
     void getPixelInfo_afterErase_returns404() throws Exception {
         // Use isolated UUID to avoid depleting shared testUuid balance
         String eraserUuid = "644c25a4-2f9c-4778-a9ca-1be4e903c203";
-        mockMvc.perform(post("/api/users")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("""
-                        {"uuid": "%s", "username": "erasertester1", "pin": "1234", "pinConfirmation": "1234"}
-                        """.formatted(eraserUuid)))
-                .andExpect(status().isCreated());
+        persist(userRepository, eraserUuid, "erasertester1");
         bankingService.ensureBank(eraserUuid);
 
         // Given: place a colored pixel at (3, 3) with paletteIndex=10
@@ -233,12 +224,7 @@ class PixelControllerTest {
     void getCanvas_erasedPixel_excluded() throws Exception {
         // Use isolated UUID to avoid depleting shared testUuid balance
         String eraserUuid = "644c25a4-2f9c-4778-a9ca-1be4e903c204";
-        mockMvc.perform(post("/api/users")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("""
-                        {"uuid": "%s", "username": "erasertester2", "pin": "1234", "pinConfirmation": "1234"}
-                        """.formatted(eraserUuid)))
-                .andExpect(status().isCreated());
+        persist(userRepository, eraserUuid, "erasertester2");
         bankingService.ensureBank(eraserUuid);
 
         // Given: place a pixel at (7, 7) then erase it
@@ -278,12 +264,7 @@ class PixelControllerTest {
         String rate402Uuid = "644c25a4-2f9c-4778-a9ca-1be4e903c205";
 
         // Register user and connect to banking
-        mockMvc.perform(post("/api/users")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("""
-                        {"uuid": "%s", "username": "rate402tester", "pin": "1234", "pinConfirmation": "1234"}
-                        """.formatted(rate402Uuid)))
-                .andExpect(status().isCreated());
+        persist(userRepository, rate402Uuid, "rate402tester");
         bankingService.ensureBank(rate402Uuid);
 
         // Spend all 5 starting points
@@ -313,7 +294,7 @@ class PixelControllerTest {
                 .andExpect(result -> {
                     String body = result.getResponse().getContentAsString();
                     assertTrue(body.contains("retryAfterSeconds"),
-                        "Response body must contain retryAfterSeconds but was: " + body);
+                        "Response body must contain retryAfterSeconds");
                 });
     }
 

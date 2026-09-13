@@ -232,7 +232,7 @@ class WebSocketIntegrationTest {
         assertTrue(logs.stream().anyMatch(event -> event.getLevel() == Level.ERROR
             && event.getFormattedMessage().startsWith("No subscriptionId")),
             "The regression must exercise the framework's ERROR-level message rendering");
-        assertEquals(user.getUuid(), probe.invocations.poll(5, TimeUnit.SECONDS),
+        assertTrue(user.getUuid().equals(probe.invocations.poll(5, TimeUnit.SECONDS)),
             "The authenticated Principal name must still route application commands");
         assertEquals(5, bank.getInitialState(user.getUuid()).balance());
         assertNoCredentialLogs(user.getUuid());
@@ -271,11 +271,11 @@ class WebSocketIntegrationTest {
         socket.send(connection(command.name(), user.getUuid()) + followOnFrames());
         await().atMost(Duration.ofSeconds(5)).until(() -> socket.frames.stream().anyMatch(frame ->
             frame.startsWith("MESSAGE") && frame.contains("subscription:initial")));
-        assertEquals(user.getUuid(), probe.invocations.poll(5, TimeUnit.SECONDS));
+        assertTrue(user.getUuid().equals(probe.invocations.poll(5, TimeUnit.SECONDS)), "Private command identity mismatch");
         awaitSessions(user.getUuid(), 1);
         assertTrue(turnstile.isVerified(user.getUuid()));
-        assertEquals(user.getUuid(), events.connecting.getFirst().getUser().getName());
-        assertEquals(user.getUuid(), events.connected.getFirst().getUser().getName());
+        assertTrue(user.getUuid().equals(events.connecting.getFirst().getUser().getName()), "Private connecting identity mismatch");
+        assertTrue(user.getUuid().equals(events.connected.getFirst().getUser().getName()), "Private connected identity mismatch");
         assertTrue(socket.frames.stream().anyMatch(frame -> frame.startsWith("CONNECTED")));
         assertEquals(5, bank.getInitialState(user.getUuid()).balance());
         assertNoCredentialLogs(user.getUuid());
@@ -313,7 +313,7 @@ class WebSocketIntegrationTest {
             assertTrue(probe.invocations.isEmpty(), "Pipelined SEND overtook blocked CONNECT");
             assertTrue(events.connected.isEmpty());
             release.countDown();
-            assertEquals(user.getUuid(), probe.invocations.poll(5, TimeUnit.SECONDS));
+            assertTrue(user.getUuid().equals(probe.invocations.poll(5, TimeUnit.SECONDS)), "Private command identity mismatch");
             awaitSessions(user.getUuid(), 1);
             assertNoCredentialLogs(user.getUuid());
         } finally {
@@ -396,12 +396,8 @@ class WebSocketIntegrationTest {
     }
 
     private User identity() {
-        User user = new User();
-        user.setUuid(UUID.randomUUID().toString());
-        user.setUsername("ws-" + UUID.randomUUID());
-        user.setAuthorId("author_" + UUID.randomUUID().toString().replace("-", ""));
-        user.setPinHash("not-used-by-websocket-authentication");
-        return users.saveAndFlush(user);
+        return au.com.dingwall.mark.bitbrush.UserTestFixtures.persist(users,
+            UUID.randomUUID().toString(), "ws-" + UUID.randomUUID());
     }
 
     private StompSession connect(String uuid) throws Exception {

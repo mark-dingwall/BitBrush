@@ -69,6 +69,15 @@ class ClientIpResolverTest {
         assertThatIllegalArgumentException().isThrownBy(() -> resolver("test").resolve(request(remoteAddress)));
     }
 
+    @ParameterizedTest
+    @org.junit.jupiter.params.provider.NullSource
+    @ValueSource(strings = {"", "1..2.3", "1.2.3.x", "1.2.3.99999999999999999999", "2001:db8::g", "2001:::1"})
+    void malformedNumericAddressesCannotBecomeThrottleKeys(String address) {
+        // Catches accepting malformed/overflowing literals or propagating unsafe parser diagnostics.
+        assertThatIllegalArgumentException().isThrownBy(() -> resolver("test").resolve(request(address)))
+            .withMessage("Client IP must be a numeric address literal");
+    }
+
     private ClientIpResolver resolver(String profile) {
         MockEnvironment environment = new MockEnvironment();
         environment.setActiveProfiles(profile);

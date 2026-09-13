@@ -28,6 +28,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 @WebMvcTest(UserController.class)
+@org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc(
+    print = org.springframework.boot.test.autoconfigure.web.servlet.MockMvcPrint.NONE)
 @ActiveProfiles("test")
 class UserControllerSliceTest {
     private static final String UUID = "681596ed-5ac6-44a4-a340-a390d2f9456c";
@@ -70,7 +72,9 @@ class UserControllerSliceTest {
                 .content(mapper.writeValueAsBytes(request)))
             .andExpect(status().is(status))
             .andExpect(header().string("Cache-Control", "no-store"))
-            .andExpect(jsonPath("$.uuid").value(UUID))
+            .andExpect(result -> org.junit.jupiter.api.Assertions.assertTrue(
+                UUID.equals(mapper.readTree(result.getResponse().getContentAsByteArray()).path("uuid").asText()),
+                "Identity response returned the wrong private identity"))
             .andExpect(jsonPath("$.username").value("Artist"))
             .andExpect(jsonPath("$.*", hasSize(2)))
             .andExpect(jsonPath("$.pin").doesNotExist())
@@ -93,7 +97,7 @@ class UserControllerSliceTest {
         verify(identities).create(any(), isNull());
     }
 
-    @ParameterizedTest
+    @ParameterizedTest(name = "invalid identity field case {index}")
     @MethodSource("invalidFields")
     void invalidIdentityFieldsAreRejectedBeforeTheWorkflow(String operation, String field, Object value) throws Exception {
         Map<String, Object> body = valid(operation);

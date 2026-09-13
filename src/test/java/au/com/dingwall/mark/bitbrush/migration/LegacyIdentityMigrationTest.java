@@ -117,7 +117,7 @@ class LegacyIdentityMigrationTest {
             assertTrue(hash.startsWith("$argon2id$v=19$m=19456,t=2,p=1$"), "Migration must use production Argon2 parameters");
             assertTrue(codec.verify(codec.canonicalize(codec.deriveLegacyPin(oldUuid)), hash), "Legacy PIN must verify");
         }
-        assertNotEquals(users.get(0).get("uuid"), users.get(1).get("uuid"));
+        assertFalse(users.get(0).get("uuid").equals(users.get(1).get("uuid")), "Rotated private identities collided");
         assertEquals(before, pixelRows("author_id"), "Pixel values and physical tuples must remain untouched");
     }
 
@@ -183,7 +183,8 @@ class LegacyIdentityMigrationTest {
                 .thenThrow(new IllegalStateException("Simulated interruption after first identity update"));
             assertThrows(org.flywaydb.core.api.FlywayException.class, this::migrate);
         }
-        assertEquals(List.of(LEGACY_A, LEGACY_B), jdbc.queryForList("SELECT uuid FROM users ORDER BY username", String.class));
+        assertTrue(List.of(LEGACY_A, LEGACY_B).equals(jdbc.queryForList("SELECT uuid FROM users ORDER BY username", String.class)),
+            "Interrupted migration did not restore legacy identities");
         assertEquals(2, jdbc.queryForObject("SELECT count(*) FROM users WHERE author_id IS NULL AND pin_hash IS NULL AND pin_backfilled IS NULL", Integer.class));
         assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM flyway_schema_history WHERE version IN ('3', '4')", Integer.class));
         assertEquals(2, configuration().placeholders(Map.of("pin-pepper", PEPPER)).load().migrate().migrationsExecuted);
@@ -211,7 +212,8 @@ class LegacyIdentityMigrationTest {
         var pixelsBefore = pixelRows("author_uuid");
         assertThrows(org.flywaydb.core.api.FlywayException.class,
             () -> configuration().placeholders(placeholders).load().migrate());
-        assertEquals(before, jdbc.queryForList("SELECT uuid, username FROM users ORDER BY username"));
+        assertTrue(before.equals(jdbc.queryForList("SELECT uuid, username FROM users ORDER BY username")),
+            "Invalid pepper changed legacy identities");
         assertEquals(pixelsBefore, pixelRows("author_id"));
         assertEquals(2, jdbc.queryForObject("SELECT count(*) FROM users WHERE author_id IS NULL AND pin_hash IS NULL AND pin_backfilled IS NULL", Integer.class));
         assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM flyway_schema_history WHERE version IN ('3', '4')", Integer.class));

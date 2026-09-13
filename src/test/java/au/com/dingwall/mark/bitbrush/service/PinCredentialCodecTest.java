@@ -96,10 +96,37 @@ class PinCredentialCodecTest {
     }
 
     @Test
-    void keepsLegacyDerivationSeparateFromCredentialHashing() {
+    void derivedLegacyPinCanBeHashedAndVerified() {
         String derived = codec.deriveLegacyPin("legacy-author-id");
 
         assertThat(codec.verify(codec.canonicalize(derived), codec.hash(codec.canonicalize(derived)))).isTrue();
+    }
+
+    @Test
+    void credentialHashUsesTheVersionedPinDomainAndRejectsTheLegacyDomain() throws Exception {
+        // Catches changing or sharing the two domain prefixes, independently of codec.verify().
+        String hash = codec.hash(codec.canonicalize("Ab!9"));
+        var encoder = new org.springframework.security.crypto.argon2.Argon2PasswordEncoder(16, 32, 1, 32, 1);
+        assertThat(encoder.matches(keyedInput("bitbrush-pin-v1\0"), hash))
+            .withFailMessage("Credential hash did not use the PIN protocol domain").isTrue();
+        assertThat(encoder.matches(keyedInput("bitbrush-legacy-pin-v1\0"), hash))
+            .withFailMessage("Credential hash reused the legacy protocol domain").isFalse();
+    }
+
+    @Test
+    void legacyDerivationMatchesAnIndependentProtocolVector() {
+        // Fixed HMAC-SHA-256/rejection-sampling vector, also used by PostgreSQL migration tests.
+        byte[] pepper = "migration-test-unique-pepper-32-bytes-2026".getBytes(StandardCharsets.UTF_8);
+        var vectorCodec = new PinCredentialCodec(pepper, 32, 1, 1, 32);
+        assertThat(vectorCodec.deriveLegacyPin("10000000-0000-4000-8000-000000000001").equals("9912"))
+            .withFailMessage("Legacy derivation did not match the independent protocol vector").isTrue();
+    }
+
+    private String keyedInput(String domain) throws Exception {
+        var mac = javax.crypto.Mac.getInstance("HmacSHA256");
+        mac.init(new javax.crypto.spec.SecretKeySpec(new byte[32], "HmacSHA256"));
+        return java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(
+            mac.doFinal((domain + "Ab!9").getBytes(StandardCharsets.UTF_8)));
     }
 
     private void assertInvalid(String rawPin) {

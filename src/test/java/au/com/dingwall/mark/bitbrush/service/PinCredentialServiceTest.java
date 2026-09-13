@@ -32,11 +32,12 @@ class PinCredentialServiceTest {
             "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=", 32, 1, 1, 16, 1, 7,
             Duration.ofMinutes(15), 5, 20, 10_000, 10_000, ""));
 
-        assertThat(first).isNotEqualTo(second);
+        assertThat(!first.equals(second)).withFailMessage("Repeated hashing reused a salt").isTrue();
         assertThat(service.verify(pin, first)).isTrue();
         assertThat(service.verify(service.canonicalize("aB!9"), first)).isFalse();
         assertThat(wrongPepper.verify(wrongPepper.canonicalize("Ab!9"), first)).isFalse();
-        assertThat(first).contains("$argon2id$").contains("m=32,t=1,p=1");
+        assertThat(first.startsWith("$argon2id$v=19$m=32,t=1,p=1$"))
+            .withFailMessage("Credential hash does not use the configured Argon2 parameters").isTrue();
         assertThat(first.contains("Ab!9")).isFalse();
         assertThat(first.contains(properties.pepper())).isFalse();
     }

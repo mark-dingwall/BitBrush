@@ -21,6 +21,7 @@ services:
       DATABASE_URL: jdbc:postgresql://postgres:5432/bitbrush
       DATABASE_USERNAME: bitbrush
       DATABASE_PASSWORD: bitbrush
+      PIN_PEPPER: ${PIN_PEPPER:?Set PIN_PEPPER to a securely backed-up Base64 secret of at least 32 random bytes}
 
 volumes:
   pgdata:

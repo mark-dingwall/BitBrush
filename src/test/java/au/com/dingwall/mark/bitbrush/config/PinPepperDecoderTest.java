@@ -14,8 +14,8 @@ class PinPepperDecoderTest {
         byte[] pepper = new byte[32];
         pepper[0] = 7;
 
-        assertThat(PinPepperDecoder.decode(Base64.getEncoder().encodeToString(pepper)))
-            .containsExactly(pepper);
+        assertThat(java.util.Arrays.equals(pepper, PinPepperDecoder.decode(Base64.getEncoder().encodeToString(pepper))))
+            .withFailMessage("Decoded pepper bytes changed").isTrue();
     }
 
     @Test
@@ -23,13 +23,14 @@ class PinPepperDecoderTest {
         byte[] pepper = new byte[48];
         pepper[47] = 9;
 
-        assertThat(PinPepperDecoder.decode(Base64.getEncoder().encodeToString(pepper)))
-            .containsExactly(pepper);
+        assertThat(java.util.Arrays.equals(pepper, PinPepperDecoder.decode(Base64.getEncoder().encodeToString(pepper))))
+            .withFailMessage("Decoded pepper bytes changed").isTrue();
     }
 
     @Test
     void rejectsMissingMalformedAndTooShortPepper() {
         assertThatIllegalArgumentException().isThrownBy(() -> PinPepperDecoder.decode(null));
+        assertThatIllegalArgumentException().isThrownBy(() -> PinPepperDecoder.decode("   "));
         assertThatIllegalArgumentException().isThrownBy(() -> PinPepperDecoder.decode("not base64!"));
         assertThatIllegalArgumentException().isThrownBy(() -> PinPepperDecoder.decode(
             Base64.getEncoder().encodeToString(new byte[31])));

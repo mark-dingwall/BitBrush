@@ -16,6 +16,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import static org.mockito.ArgumentMatchers.any;
+import static au.com.dingwall.mark.bitbrush.UserTestFixtures.persist;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -30,7 +31,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * Cleanup is handled via @AfterEach.
  */
 @SpringBootTest
-@AutoConfigureMockMvc
+@AutoConfigureMockMvc(print = org.springframework.boot.test.autoconfigure.web.servlet.MockMvcPrint.NONE)
 @ActiveProfiles("test")
 class GlobalExceptionHandlerTest {
 
@@ -50,15 +51,10 @@ class GlobalExceptionHandlerTest {
     private static final String TEST_USERNAME = "exhandler";
 
     @BeforeEach
-    void registerTestUser() throws Exception {
+    void registerTestUser() {
         when(turnstileService.verify(any())).thenReturn(true);
         when(turnstileService.isVerified(any())).thenReturn(true);
-        mockMvc.perform(post("/api/users")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("""
-                        {"uuid": "%s", "username": "%s", "pin": "1234", "pinConfirmation": "1234"}
-                        """.formatted(TEST_UUID, TEST_USERNAME)))
-                .andExpect(status().isCreated());
+        persist(userRepository, TEST_UUID, TEST_USERNAME);
     }
 
     @AfterEach

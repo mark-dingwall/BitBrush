@@ -24,7 +24,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 @SpringBootTest
-@AutoConfigureMockMvc
+@AutoConfigureMockMvc(print = org.springframework.boot.test.autoconfigure.web.servlet.MockMvcPrint.NONE)
 @ActiveProfiles("test")
 class UserControllerTest {
     @Autowired MockMvc mvc;
@@ -57,7 +57,8 @@ class UserControllerTest {
                 .content(mapper.writeValueAsBytes(new UserReconnectRequest(uuid))))
             .andExpect(status().isOk())
             .andExpect(header().string("Cache-Control", "no-store"))
-            .andExpect(jsonPath("$.uuid").value(uuid))
+            .andExpect(result -> assertTrue(uuid.equals(mapper.readTree(result.getResponse().getContentAsByteArray()).path("uuid").asText()),
+                "Reconnect returned the wrong private identity"))
             .andExpect(jsonPath("$.username").value("Artist"));
         assertTrue(turnstile.isVerified(uuid));
         assertEquals("Artist", users.findById(uuid).orElseThrow().getUsername());

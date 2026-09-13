@@ -40,6 +40,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * runs in ~2s.
  */
 @WebMvcTest(PixelController.class)
+@org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc(
+    print = org.springframework.boot.test.autoconfigure.web.servlet.MockMvcPrint.NONE)
 @ActiveProfiles("test")
 class PixelControllerSliceTest {
 
