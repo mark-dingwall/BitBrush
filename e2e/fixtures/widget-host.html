@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BitBrush local widget host</title>
+</head>
+<body>
+  <main id="bitbrush-container"></main>
+  <script>
+    window.bitbrushConfig = {
+      server: window.location.origin,
+      container: '#bitbrush-container',
+      turnstileSiteKey: 'local-turnstile-site-key'
+    };
+  </script>
+  <script src="/bitbrush-widget.js"></script>
+</body>
+</html>
