@@ -7,6 +7,7 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -21,8 +22,12 @@ class PinCredentialCodecTest {
     void canonicalizesValidPins(String rawPin, String canonicalValue) {
         PinCredentialCodec.CanonicalPin pin = codec.canonicalize(rawPin);
 
-        assertThat(pin.value()).isEqualTo(canonicalValue);
-        assertThat(pin.utf8()).containsExactly(canonicalValue.getBytes(StandardCharsets.UTF_8));
+        assertThat(pin.value().equals(canonicalValue))
+            .withFailMessage("canonical PIN did not match its expected value")
+            .isTrue();
+        assertThat(Arrays.equals(pin.utf8(), canonicalValue.getBytes(StandardCharsets.UTF_8)))
+            .withFailMessage("canonical PIN UTF-8 bytes did not match their expected value")
+            .isTrue();
     }
 
     static Stream<Arguments> canonicalPins() {
@@ -43,7 +48,9 @@ class PinCredentialCodecTest {
 
     @Test
     void preservesCaseAsPartOfCredential() {
-        assertThat(codec.canonicalize("Ab!9").value()).isNotEqualTo(codec.canonicalize("aB!9").value());
+        assertThat(!codec.canonicalize("Ab!9").value().equals(codec.canonicalize("aB!9").value()))
+            .withFailMessage("PIN case was not preserved")
+            .isTrue();
     }
 
     @Test
@@ -61,7 +68,9 @@ class PinCredentialCodecTest {
     void rejectsUnpairedSurrogatesButAcceptsAPair() {
         assertInvalid("A\uD800b!");
         assertInvalid("A\uDC00b!");
-        assertThat(codec.canonicalize("A😀b!").value()).isEqualTo("A😀b!");
+        assertThat(codec.canonicalize("A😀b!").value().equals("A😀b!"))
+            .withFailMessage("a paired supplementary code point was not preserved")
+            .isTrue();
     }
 
     @Test
@@ -70,14 +79,20 @@ class PinCredentialCodecTest {
         byte[] copy = pin.utf8();
         copy[0] = 0;
 
-        assertThat(pin.utf8()[0]).isEqualTo((byte) 'A');
+        assertThat(pin.utf8()[0] == (byte) 'A')
+            .withFailMessage("canonical PIN UTF-8 bytes were not defensively copied")
+            .isTrue();
     }
 
     @Test
     void derivesStableFourDigitLegacyPin() {
-        assertThat(codec.deriveLegacyPin("legacy-author-id")).matches("\\d{4}");
-        assertThat(codec.deriveLegacyPin("legacy-author-id"))
-            .isEqualTo(codec.deriveLegacyPin("legacy-author-id"));
+        assertThat(codec.deriveLegacyPin("legacy-author-id").matches("\\d{4}"))
+            .withFailMessage("legacy PIN was not four decimal digits")
+            .isTrue();
+        assertThat(codec.deriveLegacyPin("legacy-author-id")
+            .equals(codec.deriveLegacyPin("legacy-author-id")))
+            .withFailMessage("legacy PIN derivation was not stable")
+            .isTrue();
     }
 
     @Test
