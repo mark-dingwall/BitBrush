@@ -3,8 +3,13 @@ primary_region = "syd"
 
 [build]
 
+[deploy]
+  strategy = "immediate"
+
 [env]
   SPRING_PROFILES_ACTIVE = "prod"
+  # Provision PIN_PEPPER with Fly secrets before deployment; prod startup requires it.
+  # Enable PIN_BACKFILL_EXPORT_PATH only for the protected legacy export workflow.
 
 [http_service]
   internal_port = 8080

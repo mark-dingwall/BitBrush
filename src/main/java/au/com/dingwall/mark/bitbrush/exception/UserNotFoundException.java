@@ -6,7 +6,7 @@ package au.com.dingwall.mark.bitbrush.exception;
  */
 public class UserNotFoundException extends RuntimeException {
 
-    public UserNotFoundException(String uuid) {
-        super("User not found: " + uuid);
+    public UserNotFoundException() {
+        super("User not found");
     }
 }

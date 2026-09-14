@@ -1,24 +1,20 @@
 import { test, expect, Page } from '@playwright/test';
 
 const BITBRUSH_SERVER = 'https://bitbrush.fly.dev';
+const BITBRUSH_E2E_UUID = process.env.BITBRUSH_E2E_UUID;
+
+if (!BITBRUSH_E2E_UUID) {
+  throw new Error('BITBRUSH_E2E_UUID is required');
+}
 
 /** Pre-seed identity so the username overlay doesn't block interactions.
  *  Turnstile invisible mode doesn't work in headless Playwright. */
 async function seedIdentity(page: Page) {
   await page.goto('/', { waitUntil: 'load' });
-  const uuid = await page.evaluate(() => {
-    let uuid = localStorage.getItem('bitbrush_widget_uuid');
-    if (!uuid) {
-      uuid = crypto.randomUUID();
-      localStorage.setItem('bitbrush_widget_uuid', uuid);
-    }
-    localStorage.setItem('bitbrush_widget_username', 'PlaywrightBot');
-    return uuid;
-  });
-  // Register the user server-side (bypass Turnstile with Cloudflare test keys in dev)
-  // In prod, we just seed localStorage — the widget will re-register silently on connect,
-  // and even if it fails (403), the overlay won't show because username is in localStorage.
-  return uuid;
+  await page.evaluate((uuid) => {
+    localStorage.setItem('bitbrush_widget_uuid', uuid);
+    localStorage.removeItem('bitbrush_widget_username');
+  }, BITBRUSH_E2E_UUID);
 }
 
 /** Navigate to the BitBrush quadrant (top-left) from the intro page */
@@ -101,9 +97,9 @@ test.describe('BitBrush Widget on Production Site', () => {
     const overlay = page.locator('.bbw-overlay');
     await expect(overlay).toBeVisible({ timeout: 15000 });
 
-    // Input and button should be present
-    await expect(overlay.locator('input')).toBeVisible();
-    await expect(overlay.locator('button')).toBeVisible();
+    // The create controls should be present (other PIN and mode controls also exist).
+    await expect(overlay.getByLabel('Username', { exact: true })).toBeVisible();
+    await expect(overlay.getByRole('button', { name: 'Create account', exact: true })).toBeVisible();
   });
 
   test('REST API CORS works from production domain', async ({ page }) => {

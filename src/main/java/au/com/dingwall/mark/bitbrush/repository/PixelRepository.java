@@ -33,14 +33,14 @@ public interface PixelRepository extends JpaRepository<Pixel, Long> {
 
     @Query("""
             SELECT p.x AS x, p.y AS y FROM Pixel p
-            WHERE p.authorUuid = :authorUuid
+            WHERE p.authorId = :authorId
             AND p.paletteIndex <> 0
             AND p.placedAt = (
                 SELECT MAX(p2.placedAt) FROM Pixel p2
                 WHERE p2.x = p.x AND p2.y = p.y
             )
             """)
-    List<AuthorPixelProjection> findCurrentPixelsByAuthor(@Param("authorUuid") String authorUuid);
+    List<AuthorPixelProjection> findCurrentPixelsByAuthor(@Param("authorId") String authorId);
 
     @Query("""
             SELECT COUNT(p) FROM Pixel p

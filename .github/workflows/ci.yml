@@ -28,5 +28,30 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@017a9effdb900e5b5b2fddfb590a105619dca3c3 # v4.4.2
 
+      - name: Verify PostgreSQL legacy identity migration
+        run: ./gradlew migrationTest --no-daemon
+
       - name: Build and test
-        run: ./gradlew build --no-daemon
+        run: ./gradlew clean build --no-daemon
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+
+      - name: Install local browser test dependencies
+        working-directory: e2e
+        run: npm ci
+
+      - name: Install Chromium
+        working-directory: e2e
+        run: npx playwright install --with-deps chromium
+
+      - name: Verify full-page and widget identity workflows locally
+        working-directory: e2e
+        run: npm run test:local
+
+      - name: Build production container
+        run: docker build -t bitbrush:pin-recovery .

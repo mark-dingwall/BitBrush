@@ -57,3 +57,14 @@ Backend configuration exposes canvas dimensions, but request validation and both
 - [ ] Use the configured dimensions for validation, rendering, coordinate conversion, export, grid drawing, and interaction bounds.
 - [ ] Preserve 250×250 as the default.
 - [ ] Test at least one non-square, non-default canvas to catch width/height assumptions.
+
+## P2 — Order live updates around authoritative canvas snapshots
+
+A WebSocket pixel delta can arrive while `/api/canvas` is in flight and then be
+overwritten when the older snapshot is applied. In the full-page client, an
+in-flight pixel-info response can similarly repopulate metadata caches after a
+snapshot invalidates them.
+
+- [ ] Queue live pixel deltas while a snapshot is loading, then replay them in arrival order after applying the snapshot.
+- [ ] Prevent metadata responses started before a snapshot from repopulating the refreshed caches.
+- [ ] Cover both clients with deterministic ordering tests.

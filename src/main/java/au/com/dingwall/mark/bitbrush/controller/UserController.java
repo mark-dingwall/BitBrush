@@ -1,49 +1,48 @@
 package au.com.dingwall.mark.bitbrush.controller;
 
-import au.com.dingwall.mark.bitbrush.dto.UserRegistrationRequest;
-import au.com.dingwall.mark.bitbrush.exception.TurnstileException;
-import au.com.dingwall.mark.bitbrush.service.PixelService;
-import au.com.dingwall.mark.bitbrush.service.TurnstileService;
+import au.com.dingwall.mark.bitbrush.dto.UserCreateRequest;
+import au.com.dingwall.mark.bitbrush.dto.UserIdentityResponse;
+import au.com.dingwall.mark.bitbrush.dto.UserReconnectRequest;
+import au.com.dingwall.mark.bitbrush.dto.UserRecoveryRequest;
+import au.com.dingwall.mark.bitbrush.service.ClientIpResolver;
+import au.com.dingwall.mark.bitbrush.service.UserIdentityService;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.springframework.http.CacheControl;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
-/**
- * Registers UUID-to-username mappings for pixel authorship.
- */
 @RestController
-@RequestMapping("/api")
+@RequestMapping("/api/users")
 public class UserController {
+    private final UserIdentityService identities;
+    private final ClientIpResolver clientIps;
 
-    private static final Logger log = LoggerFactory.getLogger(UserController.class);
-
-    private final PixelService pixelService;
-    private final TurnstileService turnstileService;
-
-    public UserController(PixelService pixelService, TurnstileService turnstileService) {
-        this.pixelService = pixelService;
-        this.turnstileService = turnstileService;
+    public UserController(UserIdentityService identities, ClientIpResolver clientIps) {
+        this.identities = identities;
+        this.clientIps = clientIps;
     }
 
-    @PostMapping("/users")
-    public ResponseEntity<Void> registerUser(
-            @Valid @RequestBody UserRegistrationRequest req,
-            @RequestHeader(value = "X-Turnstile-Token", required = false) String turnstileToken) {
-        log.debug("POST /api/users: uuid={}", req.uuid());
-        if (pixelService.userExists(req.uuid())) {
-            // Returning user — already verified once, re-add to session cache
-            turnstileService.markVerified(req.uuid());
-        } else if (!turnstileService.verifyAndRemember(turnstileToken, req.uuid())) {
-            throw new TurnstileException("Turnstile verification failed");
-        }
-        pixelService.registerUser(req);
-        return ResponseEntity.status(HttpStatus.CREATED).build();
+    @PostMapping
+    public ResponseEntity<UserIdentityResponse> create(
+            @Valid @RequestBody UserCreateRequest request,
+            @RequestHeader(value = "X-Turnstile-Token", required = false) String token) {
+        return ResponseEntity.status(HttpStatus.CREATED).cacheControl(CacheControl.noStore())
+            .body(identities.create(request, token));
+    }
+
+    @PostMapping("/reconnect")
+    public ResponseEntity<UserIdentityResponse> reconnect(@Valid @RequestBody UserReconnectRequest request) {
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(identities.reconnect(request));
+    }
+
+    @PostMapping("/recover")
+    public ResponseEntity<UserIdentityResponse> recover(
+            @Valid @RequestBody UserRecoveryRequest request,
+            @RequestHeader(value = "X-Turnstile-Token", required = false) String token,
+            HttpServletRequest httpRequest) {
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore())
+            .body(identities.recover(request, token, clientIps.resolve(httpRequest)));
     }
 }

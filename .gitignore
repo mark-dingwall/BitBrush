@@ -39,4 +39,5 @@ out/
 ### Application ###
 data/
 .planning/
+.worktrees/
 NOTES.md

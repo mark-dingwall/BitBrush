@@ -7,7 +7,9 @@
     "test": "tests"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "test:local": "playwright test --config=playwright.local.config.ts",
+    "test:production": "playwright test --config=playwright.config.ts"
   },
   "keywords": [],
   "author": "",

@@ -16,6 +16,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import static org.mockito.ArgumentMatchers.any;
+import static au.com.dingwall.mark.bitbrush.UserTestFixtures.persist;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -30,7 +31,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * Cleanup is handled via @AfterEach.
  */
 @SpringBootTest
-@AutoConfigureMockMvc
+@AutoConfigureMockMvc(print = org.springframework.boot.test.autoconfigure.web.servlet.MockMvcPrint.NONE)
 @ActiveProfiles("test")
 class GlobalExceptionHandlerTest {
 
@@ -46,19 +47,14 @@ class GlobalExceptionHandlerTest {
     @MockitoBean
     private TurnstileService turnstileService;
 
-    private static final String TEST_UUID = "test-uuid-ex-handler";
+    private static final String TEST_UUID = "644c25a4-2f9c-4778-a9ca-1be4e903c206";
     private static final String TEST_USERNAME = "exhandler";
 
     @BeforeEach
-    void registerTestUser() throws Exception {
-        when(turnstileService.verifyAndRemember(any(), any())).thenReturn(true);
+    void registerTestUser() {
+        when(turnstileService.verify(any())).thenReturn(true);
         when(turnstileService.isVerified(any())).thenReturn(true);
-        mockMvc.perform(post("/api/users")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("""
-                        {"uuid": "%s", "username": "%s"}
-                        """.formatted(TEST_UUID, TEST_USERNAME)))
-                .andExpect(status().isCreated());
+        persist(userRepository, TEST_UUID, TEST_USERNAME);
     }
 
     @AfterEach
@@ -109,7 +105,7 @@ class GlobalExceptionHandlerTest {
         mockMvc.perform(post("/api/users")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
-                        {"uuid": "uuid-dup-first", "username": "dupname"}
+                        {"uuid": "644c25a4-2f9c-4778-a9ca-1be4e903c207", "username": "dupname", "pin": "1234", "pinConfirmation": "1234"}
                         """))
                 .andExpect(status().isCreated());
 
@@ -117,7 +113,7 @@ class GlobalExceptionHandlerTest {
         mockMvc.perform(post("/api/users")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
-                        {"uuid": "uuid-dup-second", "username": "dupname"}
+                        {"uuid": "644c25a4-2f9c-4778-a9ca-1be4e903c208", "username": "dupname", "pin": "1234", "pinConfirmation": "1234"}
                         """))
                 .andExpect(status().isConflict());
     }

@@ -40,6 +40,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * runs in ~2s.
  */
 @WebMvcTest(PixelController.class)
+@org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc(
+    print = org.springframework.boot.test.autoconfigure.web.servlet.MockMvcPrint.NONE)
 @ActiveProfiles("test")
 class PixelControllerSliceTest {
 
@@ -95,7 +97,7 @@ class PixelControllerSliceTest {
 
     @Test
     void postPixels_serviceThrowsUserNotFound_returns404() throws Exception {
-        doThrow(new UserNotFoundException("unknown"))
+        doThrow(new UserNotFoundException())
                 .when(pixelService).placePixels(any());
 
         mockMvc.perform(post("/api/pixels")

@@ -68,7 +68,7 @@ class StatsControllerTest {
         pixel.setX(x);
         pixel.setY(y);
         pixel.setPaletteIndex(paletteIndex);
-        pixel.setAuthorUuid(authorUuid);
+        pixel.setAuthorId(authorUuid);
         pixel.setPlacedAt(placedAt);
         pixelRepository.save(pixel);
     }

@@ -25,6 +25,7 @@ public class TurnstileService {
 
     private final TurnstileProperties properties;
     private final RestClient restClient;
+    // Successful identity authentication remains verified until process restart.
     private final Set<String> verifiedUuids = ConcurrentHashMap.newKeySet();
 
     public TurnstileService(TurnstileProperties properties, RestClient.Builder restClientBuilder) {
@@ -35,17 +36,6 @@ public class TurnstileService {
         this.restClient = restClientBuilder.requestFactory(factory).build();
     }
 
-    /**
-     * Verify a Turnstile token and mark the UUID as verified on success.
-     */
-    public boolean verifyAndRemember(String token, String uuid) {
-        boolean result = verify(token);
-        if (result && uuid != null) {
-            verifiedUuids.add(uuid);
-        }
-        return result;
-    }
-
     public boolean isVerified(String uuid) {
         return uuid != null && verifiedUuids.contains(uuid);
     }
@@ -53,12 +43,6 @@ public class TurnstileService {
     public void markVerified(String uuid) {
         if (uuid != null) {
             verifiedUuids.add(uuid);
-        }
-    }
-
-    public void removeVerified(String uuid) {
-        if (uuid != null) {
-            verifiedUuids.remove(uuid);
         }
     }
 
@@ -86,11 +70,11 @@ public class TurnstileService {
             }
 
             if (!response.success()) {
-                log.warn("Turnstile verification failed: error-codes={}", response.errorCodes());
+                log.warn("Turnstile verification failed");
             }
             return response.success();
         } catch (Exception e) {
-            log.error("Turnstile verification failed with exception", e);
+            log.error("Turnstile verification request failed");
             return false;
         }
     }
