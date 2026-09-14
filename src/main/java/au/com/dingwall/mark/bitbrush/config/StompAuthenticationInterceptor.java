@@ -33,7 +33,9 @@ public class StompAuthenticationInterceptor implements ChannelInterceptor {
 
         StompCommand command = accessor.getCommand();
         if (command == StompCommand.CONNECT || command == StompCommand.STOMP) {
-            String uuid = accessor.getFirstNativeHeader("uuid");
+            var uuidHeaders = accessor.getNativeHeader("uuid");
+            if (uuidHeaders == null || uuidHeaders.size() != 1) throw invalidIdentity();
+            String uuid = uuidHeaders.getFirst();
             if (!CanonicalUuidValidator.isCanonical(uuid)) throw invalidIdentity();
             boolean exists;
             try {
@@ -49,6 +51,10 @@ public class StompAuthenticationInterceptor implements ChannelInterceptor {
             turnstile.markVerified(uuid);
         } else if (!(accessor.getUser() instanceof StompPrincipal)) {
             throw invalidIdentity();
+        }
+        if (command == StompCommand.SEND && accessor.getDestination() != null
+                && !accessor.getDestination().startsWith("/app/")) {
+            throw new MessagingException("Invalid SEND destination");
         }
         return message;
     }

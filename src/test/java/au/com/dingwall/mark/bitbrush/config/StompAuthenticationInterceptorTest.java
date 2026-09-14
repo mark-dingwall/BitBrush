@@ -64,6 +64,21 @@ class StompAuthenticationInterceptorTest {
     }
 
     @ParameterizedTest
+    @EnumSource(value = StompCommand.class, names = {"CONNECT", "STOMP"})
+    void duplicateIdentityHeadersAreRejectedBeforeAuthentication(StompCommand command) {
+        when(users.existsById(UUID)).thenReturn(true);
+        StompHeaderAccessor headers = headers(command, UUID);
+        headers.addNativeHeader("uuid", "99999999-aaaa-4bbb-8ccc-dddddddddddd");
+
+        MessagingException error = assertThrows(MessagingException.class,
+            () -> interceptor().preSend(message(headers), null));
+
+        assertEquals("Invalid connection identity", error.getMessage());
+        assertNull(headers.getUser());
+        verifyNoInteractions(users, turnstile);
+    }
+
+    @ParameterizedTest
     @EnumSource(value = StompCommand.class, names = {"SEND", "SUBSCRIBE", "UNSUBSCRIBE", "ACK", "NACK", "BEGIN", "COMMIT", "ABORT", "DISCONNECT"})
     void laterClientCommandsRequirePropagatedAuthenticatedPrincipal(StompCommand command) {
         assertThrows(MessagingException.class, () -> interceptor().preSend(message(headers(command, UUID)), null));

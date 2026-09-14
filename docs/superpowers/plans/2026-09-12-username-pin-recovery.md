@@ -20,7 +20,7 @@
 - `PIN_PEPPER` is Base64-encoded, decodes to at least 32 bytes, is mandatory in docker/prod, and has explicit non-production dev/test values.
 - Argon2id production defaults are 19,456 KiB memory, 2 iterations, parallelism 1, 32-byte output, and at most two concurrent operations; calibration may increase but never reduce these values.
 - Argon2 capacity acquisition is immediate; exhaustion returns `503 Service Unavailable` with `Retry-After: 1`. During recovery it cancels only that request's account reservation, preserving the username failure budget while retaining the IP request.
-- Recovery permits five failed attempts per exact username and twenty total requests per canonical source IP in rolling 15-minute windows.
+- Recovery permits five failed attempts per exact username and twenty syntactically valid attempts per canonical source IP in rolling 15-minute windows.
 - The recovery maps are process-local and bounded to 10,000 live keys each; capacity exhaustion fails closed.
 - Identity POST bodies are capped at 4,096 bytes before MVC, Turnstile, or Argon2; raw PIN fields are capped at 256 UTF-16 code units before credential work.
 - New public author IDs are `author_` plus unpadded base64url for 24 random bytes (192 random bits), syntactically disjoint from canonical UUIDs.

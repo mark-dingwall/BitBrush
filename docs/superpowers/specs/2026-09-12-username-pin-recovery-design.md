@@ -244,9 +244,9 @@ Salting prevents precomputed/rainbow-table comparison and prevents identical PIN
 Default limits are configurable but secure by default:
 
 - Five recovery failures per exact username in a rolling 15-minute window.
-- Twenty recovery requests per source IP in a rolling 15-minute window.
+- Twenty syntactically valid recovery attempts per source IP in a rolling 15-minute window.
 
-The IP check occurs before calling Turnstile. Account-specific state is created only after a valid Turnstile challenge, limiting attacker-driven map growth from arbitrary unauthenticated usernames. The account map is also size-bounded and entries expire; when capacity cannot be safely allocated, recovery fails closed.
+PIN canonicalization occurs before admission accounting; the IP check then occurs before calling Turnstile. Account-specific state is created only after a valid Turnstile challenge, limiting attacker-driven map growth from arbitrary unauthenticated usernames. The account map is also size-bounded and entries expire; when capacity cannot be safely allocated, recovery fails closed.
 
 Unknown and existing usernames reserve equivalent account attempts after Turnstile and before credential verification, so concurrent requests cannot exceed the account limit. A wrong or unknown credential retains its reservation as failure state. If global Argon2 capacity cannot be acquired and recovery returns `503`, only that request's reservation is cancelled atomically; the request remains in the source IP's request history. A successful recovery clears that username's failure state; it does not erase the source IP's request history. Every `429` response reports the applicable remaining delay through `Retry-After` without revealing which limit fired.
 

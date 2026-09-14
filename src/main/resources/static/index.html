@@ -1446,6 +1446,13 @@
           return;
         }
         const pixels = await resp.json();
+        imageData.data.fill(0);
+        for (let i = 3; i < imageData.data.length; i += 4) {
+          imageData.data[i] = 255;
+        }
+        pixelInfoCache.clear();
+        coordToAuthor.clear();
+        hideTooltip();
         // Paint all pixels into buffer without flushing (batch mode)
         pixels.forEach(p => paintPixelInBuffer(p.x, p.y, p.color, false));
         // Single flush after all pixels are painted
@@ -2146,6 +2153,7 @@
           loadCanvas();
           console.error('Batch pixel placement failed:', resp.status);
         } else {
+          if (pixelsBatch.length > 1) loadCanvas();
           fetchStats();
         }
       } catch (err) {

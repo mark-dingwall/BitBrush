@@ -487,6 +487,10 @@
           return resp.json();
         })
         .then(function (pixels) {
+          imageData.data.fill(0);
+          for (var i = 3; i < imageData.data.length; i += 4) {
+            imageData.data[i] = 255;
+          }
           pixels.forEach(function (p) { paintPixelInBuffer(p.x, p.y, p.color, false); });
           flushBuffer();
           renderViewport();
@@ -888,6 +892,8 @@
       }).then(function (resp) {
         if (!resp.ok) {
           if (resp.status === 402) flashBalanceRed();
+          loadCanvas();
+        } else if (pixelsBatch.length > 1) {
           loadCanvas();
         }
       }).catch(function () {
