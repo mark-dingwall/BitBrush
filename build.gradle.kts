@@ -86,3 +86,13 @@ tasks.jacocoTestReport {
 		csv.required = true
 	}
 }
+
+// Explicitly invoked only by the isolated reporter verifier; never part of test/build.
+val reporterFixture by sourceSets.creating
+configurations[reporterFixture.implementationConfigurationName].extendsFrom(configurations.testImplementation.get())
+configurations[reporterFixture.runtimeOnlyConfigurationName].extendsFrom(configurations.testRuntimeOnly.get())
+tasks.register<Test>("reporterFixtureTest") {
+    testClassesDirs = reporterFixture.output.classesDirs
+    classpath = reporterFixture.runtimeClasspath
+    useJUnitPlatform()
+}
