@@ -195,3 +195,137 @@ npm run test:production
 ```
 
 Provision `BITBRUSH_E2E_UUID` through your secret mechanism first; setup fails immediately if it is missing. Only the private UUID is preloaded, and `/api/users/reconnect` supplies the authoritative username. This suite is deliberately separate from local tests and is not a default CI gate.
+
+## Tested-image CI and Fly releases
+
+CI runs `clean build` **before** `migrationTest`, then deterministic browser tests,
+then builds one `linux/amd64` image labelled with the checkout SHA. The backend
+suite runs that image with PostgreSQL 17, production settings (including Argon2),
+and a logging-disabled reverse proxy. Only `127.0.0.1:8080` is published; the
+independent widget host uses `http://localhost:4174`. Database credentials and
+pepper are generated for each disposable fixture. Cloudflare's
+[official Turnstile test keys](https://developers.cloudflare.com/turnstile/troubleshooting/testing/)
+are runtime-only: the full-page public key is replaced once in intercepted HTML,
+and the widget fixture supplies its test public key. The packaged HTML is checked
+before and after interception. Real browser tokens must pass real server-side
+Siteverify, including creation and recovery, before canvas checks proceed. An
+external-service outage fails verification; no mocked fallback is used.
+
+To reproduce on a Docker-enabled machine with Java 21 and Node 22:
+
+```bash
+python3 ci/java-check.py build
+python3 ci/java-check.py migration
+python3 ci/verify-java-reporter.py
+npm --prefix e2e ci
+(cd e2e && npx playwright install --with-deps chromium)
+node ci/verify-browser-reporter.mjs
+python3 -m unittest discover -s ci/tests
+npm --prefix e2e run test:local
+mkdir -p .ci-runtime
+export BITBRUSH_TEST_IMAGE=bitbrush:local-verification
+docker build --platform linux/amd64 --label "org.opencontainers.image.revision=$(git rev-parse HEAD)" --iidfile .ci-runtime/tested-image-id -t "$BITBRUSH_TEST_IMAGE" .
+trap 'python3 ci/backend.py down' EXIT INT TERM
+python3 ci/backend.py up
+npm --prefix e2e run test:backend
+python3 ci/backend.py down
+trap - EXIT INT TERM
+```
+
+Always remove the fixture and its disposable volumes, including after an
+interruption. CI performs best-effort cleanup with an `always()` step; a forced
+runner termination can prevent cleanup, so CI uses ephemeral hosted runners.
+Do not point the backend suite at production.
+
+Browser configurations use separate `test-output/{local,backend,smoke,portfolio}`
+directories. Screenshots, video and traces are disabled. The safe browser reporter
+publishes static source locations, outcomes, durations and constant error codes;
+it ignores titles, exceptions, streams and attachments. CI's Gradle init script
+similarly disables raw JUnit/HTML reports and test exception/stream logging and
+emits allowlisted XML under `build/safe-results`. The `ci/java-check.py` wrapper
+captures Gradle streams, including output outside test logging during JVM
+shutdown, and emits only those safe results plus a constant command outcome.
+Compiler and infrastructure failures therefore produce a constant code in CI.
+The migration check fails if its results are missing, empty, failed or skipped;
+a missing Docker daemon cannot silently turn it green. Synthetic credential failures
+run in captured child processes. Each parent requires a private constant witness
+written only by the intended failing assertion, in addition to its exact test
+identity, failure code and sentinel checks; unrelated errors in that same test
+are rejected. Temporary fixtures are never uploaded.
+CI retains only explicit safe XML and application JaCoCo HTML/CSV paths for seven
+days, even after failure. Never upload raw test directories, application logs,
+DOM/error-context attachments, storage, request bodies or STOMP frames.
+
+Successful eligible verification runs transfer the **original image** using
+`docker save`, a SHA-256 archive checksum, image ID and revision label, retained
+for one day. The dependent deployment job downloads only its own run's artifact,
+checks the transfer, pushes a unique commit/run/attempt tag and resolves the
+registry manifest digest. Fly deploys that digest without rebuilding, with
+`immediate` strategy and `--ha=false`; existing health checks, VM sizing and
+machine count remain configured in `fly.toml`. The image ID checks transfer
+integrity; the registry digest identifies the release. Fly CLI is pinned to
+0.5.11, and newly introduced artifact Actions are pinned to reviewed SHAs.
+
+Deployment requires successful verification and `refs/heads/main`. A push also
+requires repository variable `AUTO_DEPLOY_ENABLED=true`. Manual dispatch defaults
+to verification only; `deploy=true` bypasses only that variable, and cannot deploy
+a branch or failed verification. Freshness lookups compare the checkout to remote
+`main` immediately before publication and deployment. Stale runs skip, and lookup
+errors fail closed. Superseded verification jobs cancel within separate push,
+PR and dispatch groups. Deployment, image/health verification and smoke share
+one non-cancelling production concurrency group. GitHub may replace pending runs;
+freshness checks remain authoritative. Re-run the whole workflow if another
+attempt is needed; a deployment-only rerun cannot consume a previous attempt's
+image artifact.
+
+After deployment, CI allows three minutes for serving Machines to report the
+expected digest and passing health checks. It also checks stopped/suspended
+Machines with services because autostart can serve them later. It never prints
+raw Machine configuration. Missing or incomplete configuration (including an
+unreachable host) fails closed rather than hiding a potentially serving Machine.
+The separate `npm --prefix e2e run test:smoke` suite
+uses the dedicated `BITBRUSH_E2E_UUID` to reconnect the deployed full-page client
+and a localhost-hosted widget, checking canvas retrieval, bank state and real
+WebSocket/STOMP traffic. It creates no accounts, performs no recovery and places
+no pixels; browser write interception permits only reconnect. The existing
+portfolio suite remains an explicit `npm --prefix e2e run test:production`
+operation. Release summaries contain the commit, expected/observed registry
+digests and check outcomes. A failed deployment or smoke check needs investigation
+and a roll-forward correction; there is no automatic rollback.
+
+Before activating production releases, an operator must:
+
+1. Confirm PIN delivery and remote plaintext-export cleanup using the earlier
+   delivery procedure. V4 and disabled export generation were already verified;
+   leave the known local export untouched.
+2. Create a GitHub **production** environment restricted to `main`, with an
+   app-scoped `FLY_API_TOKEN` and `BITBRUSH_E2E_UUID` for the rotated private UUID
+   of a dedicated smoke account. Neither secret belongs in verification jobs.
+3. Merge with `AUTO_DEPLOY_ENABLED` absent or false.
+4. Dispatch the current `main` with `deploy=true` and inspect full verification,
+   deployment, serving-image and smoke results.
+5. Enable `AUTO_DEPLOY_ENABLED=true` only after that rollout succeeds.
+
+This change makes no full-load or memory-fit claim. Broad scanning, dependency
+automation, browser matrices, coverage thresholds and general job parallelization
+remain deferred.
+
+## Optional main-push confirmation
+
+Install per checkout with `sh ci/install-hooks.sh`. The installer refuses any
+existing effective `core.hooksPath` (including global/system settings) or active
+executable `pre-push` hook. For manual integration, keep your existing hook and
+invoke this repository's `.githooks/pre-push` with the original arguments and
+**all original stdin ref-update lines**, propagating failure; if multiple hooks
+consume stdin, capture it in a private temporary file and replay it to each hook.
+
+The hook prompts once for any update whose destination is `refs/heads/main`,
+including explicit refspecs, deletions and multiple-ref pushes:
+
+> You’re pushing directly to main. This may deploy to production. Continue? [y/N]
+
+Only `y` or `yes` (case insensitive) from `/dev/tty` proceeds. Empty input, EOF or
+no controlling terminal cancels. Other branches pass through. Automation can
+explicitly set `BITBRUSH_ALLOW_MAIN_PUSH=1`; **agents must obtain user authorization
+before using this override**. Git's `--no-verify` bypass also exists. This optional
+local hook is a reminder, not a deployment admission or security boundary.

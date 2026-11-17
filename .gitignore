@@ -41,3 +41,12 @@ data/
 .planning/
 .worktrees/
 NOTES.md
+
+# Browser and CI disposable outputs (publish only explicit safe-results paths)
+e2e/node_modules/
+e2e/test-output/
+e2e/test-results/
+e2e/safe-results/
+.ci-runtime/
+ci/__pycache__/
+ci/tests/__pycache__/

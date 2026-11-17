@@ -11,3 +11,8 @@ data
 mockups
 .claude
 .agents
+e2e
+ci
+.githooks
+.superpowers
+.ci-runtime
