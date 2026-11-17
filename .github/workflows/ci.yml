@@ -3,55 +3,184 @@ name: CI
 on:
   pull_request:
   push:
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: Deploy the verified current main image to production
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
-concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  build:
+  verify:
     runs-on: ubuntu-latest
-
+    timeout-minutes: 45
+    concurrency:
+      group: verify-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
+    env:
+      BITBRUSH_TEST_IMAGE: bitbrush:verified-${{ github.sha }}
+    outputs:
+      eligible: ${{ steps.admission.outputs.eligible }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
-
       - name: Set up Temurin Java 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
-
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@017a9effdb900e5b5b2fddfb590a105619dca3c3 # v4.4.2
-
+      - name: Build and test with safe diagnostics
+        run: python3 ci/java-check.py build
       - name: Verify PostgreSQL legacy identity migration
-        run: ./gradlew migrationTest --no-daemon
-
-      - name: Build and test
-        run: ./gradlew clean build --no-daemon
-
+        run: python3 ci/java-check.py migration
+      - name: Verify Java reporter expected failure
+        run: python3 ci/verify-java-reporter.py
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
           cache-dependency-path: e2e/package-lock.json
-
-      - name: Install local browser test dependencies
+      - name: Install browser dependencies
         working-directory: e2e
         run: npm ci
-
       - name: Install Chromium
         working-directory: e2e
         run: npx playwright install --with-deps chromium
-
-      - name: Verify full-page and widget identity workflows locally
+      - name: Verify browser reporter expected failure
+        run: node ci/verify-browser-reporter.mjs
+      - name: Verify release guards and optional hook
+        run: python3 -m unittest discover -s ci/tests
+      - name: Verify deterministic full-page and widget workflows
         working-directory: e2e
         run: npm run test:local
+      - name: Build the production image once
+        run: |
+          mkdir -p .ci-runtime
+          docker build --platform linux/amd64 --label "org.opencontainers.image.revision=$GITHUB_SHA" --iidfile .ci-runtime/tested-image-id -t "$BITBRUSH_TEST_IMAGE" .
+      - name: Start disposable production-profile fixture
+        run: python3 ci/backend.py up
+      - name: Verify both clients against packaged application and PostgreSQL
+        working-directory: e2e
+        run: npm run test:backend
+      - name: Tear down disposable fixture and volumes
+        if: always()
+        run: python3 ci/backend.py down
+      - name: Determine deployment admission after successful checks
+        id: admission
+        env:
+          AUTO_DEPLOY_ENABLED: ${{ vars.AUTO_DEPLOY_ENABLED }}
+          MANUAL_DEPLOY: ${{ inputs.deploy }}
+        run: python3 ci/release.py admit
+      - name: Save the original tested image
+        if: steps.admission.outputs.eligible == 'true'
+        run: python3 ci/release.py save
+      - name: Transfer image to dependent deployment job
+        if: steps.admission.outputs.eligible == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: tested-image-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            .ci-runtime/transfer/image.tar
+            .ci-runtime/transfer/image.json
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+          include-hidden-files: true
+      - name: Retain allowlisted verification diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: verification-results-${{ github.run_attempt }}
+          path: |
+            build/safe-results/test/results.xml
+            build/safe-results/migrationTest/results.xml
+            build/reports/jacoco/test/html/
+            build/reports/jacoco/test/jacocoTestReport.csv
+            e2e/safe-results/local/results.xml
+            e2e/safe-results/backend/results.xml
+          retention-days: 7
+          if-no-files-found: warn
 
-      - name: Build production container
-        run: docker build -t bitbrush:pin-recovery .
+  deploy:
+    needs: verify
+    if: needs.verify.result == 'success' && needs.verify.outputs.eligible == 'true' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    concurrency:
+      group: bitbrush-production
+      cancel-in-progress: false
+    steps:
+      - name: Check out verified revision
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+      - name: Download image from this workflow run
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: tested-image-${{ github.sha }}-${{ github.run_attempt }}
+          path: .ci-runtime/transfer
+      - name: Install pinned Fly CLI
+        run: ci/install-fly.sh
+      - name: Verify transfer and publish if current main
+        id: publish
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: python3 ci/release.py publish
+      - name: Deploy immutable registry digest if still current main
+        if: steps.publish.outputs.digest != ''
+        id: release
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          RELEASE_DIGEST: ${{ steps.publish.outputs.digest }}
+        run: python3 ci/release.py deploy
+      - name: Verify serving image and health within three minutes
+        id: machines
+        if: steps.release.outputs.deployed == 'true'
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          RELEASE_DIGEST: ${{ steps.publish.outputs.digest }}
+        run: python3 ci/release.py machines
+      - name: Set up Node.js
+        if: steps.release.outputs.deployed == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+      - name: Install smoke dependencies
+        if: steps.release.outputs.deployed == 'true'
+        working-directory: e2e
+        run: npm ci && npx playwright install --with-deps chromium
+      - name: Verify deployed full-page and cross-origin widget
+        id: smoke
+        if: steps.release.outputs.deployed == 'true'
+        env:
+          BITBRUSH_E2E_UUID: ${{ secrets.BITBRUSH_E2E_UUID }}
+        run: python3 ci/release.py smoke
+      - name: Record release outcomes
+        if: always()
+        env:
+          RELEASE_DIGEST: ${{ steps.publish.outputs.digest }}
+          PUBLISH_OUTCOME: ${{ steps.publish.outcome }}
+          DEPLOY_OUTCOME: ${{ steps.release.outcome }}
+          JOB_STATUS: ${{ job.status }}
+          OBSERVED_DIGEST: ${{ steps.machines.outputs.observed }}
+          MACHINE_OUTCOME: ${{ steps.machines.outcome }}
+          SMOKE_OUTCOME: ${{ steps.smoke.outcome }}
+        run: |
+          printf 'Commit: %s\nExpected registry digest: %s\nObserved registry digest: %s\nPublication: %s\nDeployment: %s\nMachines: %s\nSmoke: %s\nChecks: %s\n' "$GITHUB_SHA" "$RELEASE_DIGEST" "$OBSERVED_DIGEST" "$PUBLISH_OUTCOME" "$DEPLOY_OUTCOME" "$MACHINE_OUTCOME" "$SMOKE_OUTCOME" "$JOB_STATUS" >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain allowlisted smoke diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: smoke-results-${{ github.run_attempt }}
+          path: e2e/safe-results/smoke/results.xml
+          retention-days: 7
+          if-no-files-found: warn
