@@ -248,7 +248,10 @@ shutdown, and emits only those safe results plus a constant command outcome.
 Compiler and infrastructure failures therefore produce a constant code in CI.
 The migration check fails if its results are missing, empty, failed or skipped;
 a missing Docker daemon cannot silently turn it green. Synthetic credential failures
-run in captured child processes; their temporary fixtures are never uploaded.
+run in captured child processes. Each parent requires a private constant witness
+written only by the intended failing assertion, in addition to its exact test
+identity, failure code and sentinel checks; unrelated errors in that same test
+are rejected. Temporary fixtures are never uploaded.
 CI retains only explicit safe XML and application JaCoCo HTML/CSV paths for seven
 days, even after failure. Never upload raw test directories, application logs,
 DOM/error-context attachments, storage, request bodies or STOMP frames.
