@@ -100,7 +100,7 @@ class UserIdentityIntegrationTest {
         // Catches early admission, missing persisted credentials, stale-name echoing and bank reset.
         create();
         bank.ensureBank(privateId);
-        bank.deductPoint(privateId);
+        bank.deductPoints(privateId, 1);
         clearVerification(turnstile);
         challengeAccepted = false;
 
@@ -119,7 +119,7 @@ class UserIdentityIntegrationTest {
         // Catches failed-challenge admission, broken recovery, UUID disclosure and bank replacement.
         create();
         bank.ensureBank(privateId);
-        bank.deductPoint(privateId);
+        bank.deductPoints(privateId, 1);
         clearVerification(turnstile);
         challengeAccepted = false;
         identity("/api/users/recover", new UserRecoveryRequest("SequenceArtist", "éx😀!"), 403);

@@ -14,7 +14,7 @@ import java.security.Principal;
  * and client subscription — the push is missed. @SubscribeMapping intercepts the
  * SUBSCRIBE frame and returns current state directly to that client only.
  *
- * Same pattern as UserCountController for /app/users/count (Phase 3).
+ * Like UserCountController, sends initial state directly to the subscriber.
  */
 @Controller
 public class BankController {

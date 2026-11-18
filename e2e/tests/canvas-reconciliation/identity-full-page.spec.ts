@@ -5,6 +5,40 @@ import { deliverStompMessage, installLocalBrowserHarness, readBitbrushTestState 
 // response can cross snapshot application. These tests keep those ordered.
 test.use({ trace: 'off', screenshot: 'off', video: 'off' });
 
+for (const status of [402, 403]) {
+  test(`full page: rejected keyboard placement is reconciled after ${status}`, async ({ page }) => {
+    await installLocalBrowserHarness(page);
+    await page.addInitScript(() => {
+      localStorage.setItem('bitbrush_uuid', '11111111-2222-4333-8444-555555555555');
+    });
+    let reads = 0;
+    await page.route('**/api/canvas', route => route.fulfill({
+      json: ++reads >= 2 ? [{ x: 120, y: 120, color: '#00CC00' }] : [],
+    }));
+    let release!: () => void;
+    const reply = new Promise<void>(resolve => { release = resolve; });
+    await page.route('**/api/pixels', async route => {
+      await reply;
+      await route.fulfill({ status, body: '' });
+    });
+
+    await page.goto('/index.html');
+    const canvas = page.locator('#canvas');
+    const pixel = (x: number, y: number) => canvas.evaluate((element, p) =>
+      Array.from((element as HTMLCanvasElement).getContext('2d')!.getImageData(p.x * 2, p.y * 2, 1, 1).data), { x, y });
+    await expect.poll(() => pixel(120, 120)).toEqual([0, 204, 0, 255]);
+    await expect.poll(() => pixel(125, 125)).toEqual([0, 0, 0, 255]);
+
+    try {
+      await page.locator('#canvas-container').press('Space');
+      await expect.poll(() => pixel(125, 125)).not.toEqual([0, 0, 0, 255]);
+    } finally {
+      release();
+    }
+    await expect.poll(() => pixel(125, 125)).toEqual([0, 0, 0, 255]);
+  });
+}
+
 for (const widget of [false, true]) {
   for (const status of [400, 201]) {
     test(`${widget ? 'widget' : 'full page'}: authoritative snapshot replaces stale pixels after batch ${status}`, async ({ page }) => {

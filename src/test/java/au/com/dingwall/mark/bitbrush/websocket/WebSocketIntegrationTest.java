@@ -327,7 +327,7 @@ class WebSocketIntegrationTest {
         User user = identity();
         StompSession first = connect(user.getUuid());
         bankBarrier(first);
-        bank.deductPoint(user.getUuid());
+        bank.deductPoints(user.getUuid(), 1);
         first.disconnect();
         awaitSessions(user.getUuid(), 0);
         assertTrue(turnstile.isVerified(user.getUuid()));

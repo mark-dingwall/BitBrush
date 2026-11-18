@@ -20,7 +20,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 /**
  * Accepts pixel placement requests.
- * No DELETE endpoint — pixels are permanent (PIXL-05).
+ * Erasing a pixel appends a placement rather than deleting its history.
  */
 @RestController
 @RequestMapping("/api")
