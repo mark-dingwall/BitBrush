@@ -24,7 +24,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Integration tests for GlobalExceptionHandler ProblemDetail responses (ARCH-02).
+ * Integration tests for GlobalExceptionHandler ProblemDetail responses.
  *
  * Not using @Transactional at class level — the duplicate username test requires
  * real separate transactions so the unique constraint is enforced between requests.

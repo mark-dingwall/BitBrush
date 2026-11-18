@@ -27,7 +27,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Integration tests for POST /api/pixels (PIXL-01, PIXL-05, CANV-02, IDEN-02, ARCH-01).
+ * Integration tests for POST /api/pixels.
  *
  * Not using @Transactional at class level — complete user fixtures are committed
  * separately and must be visible to subsequent pixel placement requests.

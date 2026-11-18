@@ -2,7 +2,6 @@ package au.com.dingwall.mark.bitbrush.service;
 
 import au.com.dingwall.mark.bitbrush.config.BitbrushProperties;
 import au.com.dingwall.mark.bitbrush.dto.BankStateResponse;
-import au.com.dingwall.mark.bitbrush.exception.InsufficientBalanceException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -70,40 +69,9 @@ public class BankingService {
     }
 
     /**
-     * Atomically deducts 1 point from the user's balance.
-     * Throws InsufficientBalanceException if balance is 0 — callers should NOT suppress.
-     *
-     * CRITICAL: Uses compute() to ensure the check-and-deduct is atomic.
-     * Separate get() + put() would create a race window where two concurrent requests
-     * both read balance=1, both see it as &gt; 0, and both deduct — spending 0 points
-     * while placing 2 pixels.
-     */
-    public void deductPoint(String userUuid) {
-        int earnRate = bitbrushProperties.placement().earnRateSeconds();
-        boolean[] deducted = {false};
-        bankMap.compute(userUuid, (uuid, state) -> {
-            if (state == null || state.balance() <= 0) {
-                return state; // no change
-            }
-            deducted[0] = true;
-            return state.withBalance(state.balance() - 1);
-        });
-        if (!deducted[0]) {
-            throw new InsufficientBalanceException(earnRate);
-        }
-        // Push updated balance AFTER compute() returns (must not call sendToUser inside compute)
-        pushBankState(userUuid);
-        log.debug("Point deducted");
-    }
-
-    /**
      * Atomically deducts up to {@code count} points from the user's balance.
-     * Returns the number of points actually deducted (may be less than {@code count}
-     * if balance is insufficient). Returns 0 if no balance at all.
-     *
-     * Unlike {@link #deductPoint(String)}, this does NOT throw InsufficientBalanceException
-     * on partial deduction — the caller decides how to handle partial results.
-     * This supports drag-to-place partial placement per the "stop placing silently" decision.
+     * Returns the number of points deducted, or zero if the bank is empty or absent.
+     * The caller decides how to handle a partial or zero grant.
      */
     public int deductPoints(String userUuid, int count) {
         int[] deducted = {0};

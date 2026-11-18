@@ -22,6 +22,7 @@ services:
       DATABASE_USERNAME: bitbrush
       DATABASE_PASSWORD: bitbrush
       PIN_PEPPER: ${PIN_PEPPER:?Set PIN_PEPPER to a securely backed-up Base64 secret of at least 32 random bytes}
+      TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:?Set TURNSTILE_SECRET_KEY to match the browser site key}
 
 volumes:
   pgdata:

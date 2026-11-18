@@ -1,7 +1,7 @@
 package au.com.dingwall.mark.bitbrush.exception;
 
 /**
- * Thrown by BankingService.deductPoint() when a user's placement point balance is zero.
+ * Thrown when the placement service cannot deduct any points for a placement.
  *
  * Carries retryAfterSeconds so GlobalExceptionHandler can set the Retry-After HTTP header
  * and embed the value in the ProblemDetail response body for clients.

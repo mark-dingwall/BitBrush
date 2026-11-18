@@ -1681,7 +1681,7 @@
           updateBankDisplay(state);
         });
 
-        // RTME-03: re-fetch full canvas state on every connect (including reconnects)
+        // Reload the canvas to catch placements missed while disconnected.
         loadCanvas();
 
         updateConnectionStatus('connected');
@@ -2013,9 +2013,12 @@
           })
         }).then(resp => {
           if (resp.ok) fetchStats();
-          else if (resp.status === 402) flashBalanceRed();
-          else if (resp.status === 403) showErrorFlash('Verification failed — please reload');
-          else { showErrorFlash('Pixel placement failed'); loadCanvas(); }
+          else {
+            if (resp.status === 402) flashBalanceRed();
+            else if (resp.status === 403) showErrorFlash('Verification failed — please reload');
+            else showErrorFlash('Pixel placement failed');
+            loadCanvas();
+          }
         }).catch(err => {
           showErrorFlash('Network error placing pixel');
           loadCanvas();

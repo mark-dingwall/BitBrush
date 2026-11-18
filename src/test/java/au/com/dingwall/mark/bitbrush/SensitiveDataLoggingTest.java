@@ -130,7 +130,7 @@ class SensitiveDataLoggingTest {
             var listener = new WebSocketEventListener(mock(SimpMessagingTemplate.class), bank);
             listener.handleConnect(new SessionConnectedEvent(this, connectedMessage, connect.getUser()));
             bank.earnPoints();
-            bank.deductPoint(privateId);
+            bank.deductPoints(privateId, 1);
             listener.handleDisconnect(new SessionDisconnectEvent(this, connectedMessage, "privacy-session",
                 CloseStatus.NORMAL, connect.getUser()));
 

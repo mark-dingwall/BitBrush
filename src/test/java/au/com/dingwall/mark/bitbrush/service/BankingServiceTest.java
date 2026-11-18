@@ -2,7 +2,6 @@ package au.com.dingwall.mark.bitbrush.service;
 
 import au.com.dingwall.mark.bitbrush.config.BitbrushProperties;
 import au.com.dingwall.mark.bitbrush.dto.BankStateResponse;
-import au.com.dingwall.mark.bitbrush.exception.InsufficientBalanceException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -17,17 +16,18 @@ import org.springframework.messaging.simp.user.SimpSession;
 import org.springframework.messaging.simp.user.SimpUserRegistry;
 import java.util.Set;
 
+import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 import static org.mockito.ArgumentMatchers.*;
 
 /**
- * Unit tests for BankingService (BANK-01 through BANK-05).
+ * Unit tests for BankingService.
  *
  * Pure unit tests using Mockito — no @SpringBootTest required.
  * Mocks SimpMessagingTemplate and BitbrushProperties to isolate BankingService logic.
@@ -72,7 +72,7 @@ class BankingServiceTest {
         bankingService.earnPoints();
         assertEquals(6, bankingService.getInitialState("registry-user").balance());
         verifyNoMoreInteractions(messagingTemplate);
-        bankingService.deductPoint("registry-user");
+        bankingService.deductPoints("registry-user", 1);
         assertEquals(5, bankingService.getInitialState("registry-user").balance());
         bankingService.ensureBank("registry-user");
         assertEquals(5, bankingService.getInitialState("registry-user").balance());
@@ -170,28 +170,6 @@ class BankingServiceTest {
     }
 
     @Test
-    void deductPointSucceedsWithBalance() {
-        // Given: user connected with balance > 0
-        bankingService.ensureBank("uuid-1");
-        // When: deductPoint(userUuid) is called
-        // Then: no exception thrown, balance decreases by 1
-        assertDoesNotThrow(() -> bankingService.deductPoint("uuid-1"));
-        assertEquals(4, bankingService.getInitialState("uuid-1").balance());
-    }
-
-    @Test
-    void deductPointThrowsAtZeroBalance() {
-        // Given: user connected with balance = 0 (spend all 5 starting points)
-        bankingService.ensureBank("uuid-1");
-        for (int i = 0; i < 5; i++) {
-            bankingService.deductPoint("uuid-1");
-        }
-        // When: deductPoint(userUuid) is called with balance = 0
-        // Then: InsufficientBalanceException is thrown
-        assertThrows(InsufficientBalanceException.class, () -> bankingService.deductPoint("uuid-1"));
-    }
-
-    @Test
     void initialStateReturnsCorrectShape() {
         // Given: user connected with a known balance
         bankingService.ensureBank("uuid-1");
@@ -204,46 +182,35 @@ class BankingServiceTest {
     }
 
     @Test
-    void concurrentDeductIsAtomic() throws InterruptedException {
-        // Given: user connected with balance = 1
-        bankingService.ensureBank("uuid-1");
-        // Spend 4 of the 5 starting points to get to balance=1
-        for (int i = 0; i < 4; i++) {
-            bankingService.deductPoint("uuid-1");
-        }
-        assertEquals(1, bankingService.getInitialState("uuid-1").balance());
+    void concurrentDeductPointsCanSpendTheLastPointOnlyOnce() throws Exception {
+        String uuid = "uuid-1";
+        bankingService.ensureBank(uuid);
+        assertEquals(4, bankingService.deductPoints(uuid, 4));
+        assertEquals(1, bankingService.getInitialState(uuid).balance());
 
-        // When: 2 threads simultaneously call deductPoint(userUuid)
-        CountDownLatch startLatch = new CountDownLatch(1);
-        CountDownLatch doneLatch = new CountDownLatch(2);
-        AtomicInteger successes = new AtomicInteger(0);
-        AtomicInteger failures = new AtomicInteger(0);
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        Callable<Integer> debit = () -> {
+            ready.countDown();
+            assertTrue(start.await(5, TimeUnit.SECONDS), "Concurrent debit did not start");
+            return bankingService.deductPoints(uuid, 1);
+        };
 
         ExecutorService executor = Executors.newFixedThreadPool(2);
-        for (int i = 0; i < 2; i++) {
-            executor.submit(() -> {
-                try {
-                    startLatch.await();
-                    bankingService.deductPoint("uuid-1");
-                    successes.incrementAndGet();
-                } catch (InsufficientBalanceException e) {
-                    failures.incrementAndGet();
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                } finally {
-                    doneLatch.countDown();
-                }
-            });
+        try {
+            var first = executor.submit(debit);
+            var second = executor.submit(debit);
+            assertTrue(ready.await(5, TimeUnit.SECONDS), "Debit workers did not become ready");
+            start.countDown();
+
+            int firstGrant = first.get(5, TimeUnit.SECONDS);
+            int secondGrant = second.get(5, TimeUnit.SECONDS);
+            assertEquals(0, Math.min(firstGrant, secondGrant));
+            assertEquals(1, Math.max(firstGrant, secondGrant));
+            assertEquals(0, bankingService.getInitialState(uuid).balance());
+        } finally {
+            executor.shutdownNow();
         }
-
-        startLatch.countDown(); // release both threads simultaneously
-        doneLatch.await();
-        executor.shutdown();
-
-        // Then: exactly 1 succeeds, exactly 1 throws; balance never goes negative
-        assertEquals(1, successes.get(), "Exactly 1 thread should succeed");
-        assertEquals(1, failures.get(), "Exactly 1 thread should throw InsufficientBalanceException");
-        assertEquals(0, bankingService.getInitialState("uuid-1").balance());
     }
 
     @Test
@@ -294,18 +261,15 @@ class BankingServiceTest {
     }
 
     @Test
-    void deductPoint_unknownUuid_throwsInsufficientBalance() {
-        assertThrows(InsufficientBalanceException.class,
-                () -> bankingService.deductPoint("uuid-never-connected"));
+    void deductPoints_returnsZero_whenUuidHasNoBank() {
+        assertEquals(0, bankingService.deductPoints("uuid-never-connected", 1));
     }
 
     @Test
     void deductPoints_returnsZero_whenNoBalance() {
         // Given: user connected with balance = 0
         bankingService.ensureBank("uuid-dp-3");
-        for (int i = 0; i < 5; i++) {
-            bankingService.deductPoint("uuid-dp-3");
-        }
+        assertEquals(5, bankingService.deductPoints("uuid-dp-3", 5));
         assertEquals(0, bankingService.getInitialState("uuid-dp-3").balance());
         // When: deductPoints(uuid, 1) is called
         int deducted = bankingService.deductPoints("uuid-dp-3", 1);

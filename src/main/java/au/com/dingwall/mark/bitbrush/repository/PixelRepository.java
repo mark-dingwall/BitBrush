@@ -14,7 +14,7 @@ import java.util.Optional;
  * Persistence layer for the pixel placement log.
  *
  * Last-writer-wins: returns the most recently placed pixel at each (x,y) coordinate.
- * Phase 5 note: profile this query if canvas data grows large — consider a dedicated
+ * Profile these queries as placement history grows and consider a dedicated
  * current-state table.
  */
 public interface PixelRepository extends JpaRepository<Pixel, Long> {
