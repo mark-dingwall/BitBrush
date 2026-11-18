@@ -15,7 +15,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Repository slice tests for Pixel persistence (PIXL-03, PIXL-04).
+ * Repository slice tests for Pixel persistence.
  *
  * Uses @DataJpaTest so only the JPA layer is loaded (in-memory H2).
  */

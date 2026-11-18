@@ -27,7 +27,7 @@ import static org.mockito.Mockito.*;
 import static org.mockito.ArgumentMatchers.*;
 
 /**
- * Unit tests for BankingService (BANK-01 through BANK-05).
+ * Unit tests for BankingService.
  *
  * Pure unit tests using Mockito — no @SpringBootTest required.
  * Mocks SimpMessagingTemplate and BitbrushProperties to isolate BankingService logic.

@@ -19,7 +19,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Integration tests for GET /api/canvas (CANV-01, ARCH-01).
+ * Integration tests for GET /api/canvas.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
